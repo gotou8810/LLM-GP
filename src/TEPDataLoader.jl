@@ -79,8 +79,16 @@ DataFrameから指定された変数（列名）のみを抽出した新しいDa
 存在しない変数が指定された場合はエラーを発生させます。
 """
 function extract_variables(df::DataFrame, variables::Vector{String})::DataFrame
-    # To be implemented
-    return DataFrame()
+    # 指定された変数がすべてDataFrameに存在するか確認
+    df_col_names = names(df)
+    missing_vars = filter(v -> !(v in df_col_names), variables)
+    
+    if !isempty(missing_vars)
+        error("The following variables are not found in the DataFrame: " * join(missing_vars, ", "))
+    end
+
+    # 指定された列を抽出（新しいDataFrameを返す）
+    return df[:, variables]
 end
 
 end # module

@@ -26,7 +26,7 @@
   - _Requirements: 2_
   - _Boundary: TEPDataLoader_
 
-- [ ] 2.3 (P) `extract_variables` 関数の実装とユニットテスト
+- [x] 2.3 (P) `extract_variables` 関数の実装とユニットテスト
   - 与えられた `DataFrame` と変数名のリスト（`Vector{String}`）を受け取り、対応する列のみを抽出した新しい `DataFrame` を返す処理を実装する
   - 指定された変数が `DataFrame` に存在しない場合の事前チェックと、明確なエラーメッセージを持つ例外の送出を実装する
   - ユニットテストを追加し、正常抽出と存在しない変数の指定時のエラー動作を検証する

@@ -57,4 +57,38 @@ using .TEPDataLoader
             rm(invalid_file)
         end
     end
+
+    @testset "extract_variables" begin
+        using DataFrames
+        df = DataFrame(A = 1:3, B = ["x", "y", "z"], C = [0.1, 0.2, 0.3])
+        
+        # 正常系: 存在する列の抽出
+        vars = ["A", "C"]
+        extracted = extract_variables(df, vars)
+        @test ncol(extracted) == 2
+        @test names(extracted) == ["A", "C"]
+        @test extracted.A == 1:3
+        @test extracted.C == [0.1, 0.2, 0.3]
+        
+        # 正常系: 1列のみの抽出
+        vars_single = ["B"]
+        extracted_single = extract_variables(df, vars_single)
+        @test ncol(extracted_single) == 1
+        @test names(extracted_single) == ["B"]
+        
+        # 異常系: 存在しない列の指定
+        vars_missing = ["A", "D"]
+        # ErrorException が投げられ、メッセージに D が含まれていることを確認
+        try
+            extract_variables(df, vars_missing)
+            @test false # Should not reach here
+        catch e
+            @test e isa ErrorException
+            @test occursin("D", e.msg)
+        end
+        
+        # 異常系: 全て存在しない列の指定
+        vars_all_missing = ["X", "Y"]
+        @test_throws ErrorException extract_variables(df, vars_all_missing)
+    end
 end
