@@ -29,11 +29,49 @@ end
 
 """
 ローカルの.RDataファイルを読み込み、DataFrameに変換して返します。
-ファイルが不正な場合はエラーを発生させます。
+ファイルが不正な場合やデータが含まれていない場合はエラーを発生させます。
 """
 function load_rdata(file_path::String)::DataFrame
-    # To be implemented
-    return DataFrame()
+    if !isfile(file_path)
+        throw(SystemError("File not found: $file_path"))
+    end
+
+    try
+        # RData.load は通常 Dict{String, Any} を返す
+        objs = RData.load(file_path)
+        
+        if isempty(objs)
+            error("No objects found in .RData file: $file_path")
+        end
+
+        # 最初に見つかった DataFrame を返す。
+        # DataFrame が見つからない場合は、最初のアレイ状のオブジェクトを DataFrame に変換して返す。
+        for (name, val) in objs
+            if val isa DataFrame
+                return val
+            end
+        end
+
+        # DataFrame が直接含まれていない場合、最初のオブジェクトを DataFrame に変換を試みる
+        first_obj = first(values(objs))
+        try
+            return DataFrame(first_obj)
+        catch
+            # DataFrame(first_obj, :auto) を試みる（マトリックスなどの場合）
+            if first_obj isa AbstractMatrix || first_obj isa AbstractArray
+                return DataFrame(first_obj, :auto)
+            else
+                error("Could not convert object of type $(typeof(first_obj)) to DataFrame")
+            end
+        end
+
+    catch e
+        if e isa SystemError || e isa ErrorException
+            rethrow(e)
+        else
+            error("Failed to load .RData file: $file_path. Error: $e")
+        end
+    end
 end
 
 """
