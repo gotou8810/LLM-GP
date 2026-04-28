@@ -11,8 +11,20 @@ export download_data, load_rdata, extract_variables
 ダウンロードに失敗した場合はエラーを発生させます。
 """
 function download_data(url::String, dest_path::String)::String
-    # To be implemented
-    return ""
+    try
+        Downloads.download(url, dest_path)
+        return dest_path
+    catch e
+        # 通信エラーや無効なURLなどの場合は RequestError がスローされる
+        if e isa RequestError
+            error_msg = "Failed to download data from $url: $(e.message)"
+            @error error_msg
+            rethrow(e)
+        else
+            @error "Unexpected error during download: $e"
+            rethrow(e)
+        end
+    end
 end
 
 """
