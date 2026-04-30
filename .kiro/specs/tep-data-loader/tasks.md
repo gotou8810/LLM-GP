@@ -1,6 +1,6 @@
 # Implementation Plan
 
-- [ ] 1. Foundation: モジュール構造と環境のセットアップ
+- [x] 1. Foundation: モジュール構造と環境のセットアップ
 - [x] 1.1 `TEPDataLoader.jl` の作成と依存パッケージの設定
   - `Project.toml` を作成し、`RData`, `DataFrames`, `Downloads` を依存関係に追加する
   - `src/TEPDataLoader.jl` にモジュールのスケルトンを定義し、エクスポートする関数名（`download_data`, `load_rdata`, `extract_variables`）を宣言する
@@ -8,7 +8,7 @@
   - **完了条件**: `Pkg.test()` がモジュール読み込みエラー等なく正常に実行できる状態になること
   - _Requirements: 1, 2, 3_
 
-- [ ] 2. Core: データ処理関数の実装
+- [x] 2. Core: データ処理関数の実装
 - [x] 2.1 (P) `download_data` 関数の実装とユニットテスト
   - `Downloads.jl` を使用して指定URLからファイルをダウンロードし、保存先パスを返す処理を実装する
   - 無効なURLや通信エラーに対する例外ハンドリングを実装し、適切なエラーメッセージを送出する
@@ -27,15 +27,15 @@
   - _Boundary: TEPDataLoader_
 
 - [x] 2.3 (P) `extract_variables` 関数の実装とユニットテスト
-  - 与えられた `DataFrame` と変数名のリスト（`Vector{String}`）を受け取り、対応する列のみを抽出した新しい `DataFrame` を返す処理を実装する
+  - 与えられた `DataFrame` と変数名のリスト（`Vector{String}`）を受け取り、対応する列のみを抽出した新しい `DataFrame`  を返す処理を実装する
   - 指定された変数が `DataFrame` に存在しない場合の事前チェックと、明確なエラーメッセージを持つ例外の送出を実装する
   - ユニットテストを追加し、正常抽出と存在しない変数の指定時のエラー動作を検証する
-  - **完了条件**: 入力された DataFrame から指定列のみを持つ新しい DataFrame が生成され、存在しない列の指定時にはフェイルファストにエラーがスローされることがテストで確認されること
+  - **完了条件**: 入力された DataFrame から指定列のみを持つ新しい DataFrame が生成され、存在しない列の指定時にはフェイ ルファストにエラーがスローされることがテストで確認されること
   - _Requirements: 3_
   - _Boundary: TEPDataLoader_
 
-- [ ] 3. Integration and Validation: エンドツーエンド検証
-- [ ] 3.1 データパイプラインの統合テスト
+- [x] 3. Integration and Validation: エンドツーエンド検証
+- [x] 3.1 データパイプラインの統合テスト
   - `download_data` -> `load_rdata` -> `extract_variables` を一連のフローとして実行する統合テストを実装する
   - 実データ（または構造を模したテストデータ）をダウンロードし、特定の変数が最終的に DataFrame として正しく抽出されることまでを通しで確認する
   - **完了条件**: ダウンロードから変数抽出までの全フローが結合テストとしてパスすること

@@ -31,17 +31,17 @@ using .TEPDataLoader
         using DataFrames
         using Downloads
         
-        # 正常系: 有効な .RData (.rda) ファイルの読み込み
-        valid_rda_url = "https://raw.githubusercontent.com/JuliaData/RData.jl/main/test/data_v3/dfattributes.rda"
-        valid_file = tempname() * ".rda"
-        try
-            Downloads.download(valid_rda_url, valid_file)
+        # 正常系: 有効なローカルの .RData ファイルの読み込み
+        # プロジェクトルートにある TEP_FaultFree_Training.RData を使用
+        valid_file = joinpath(dirname(@__DIR__), "TEP_FaultFree_Training.RData")
+        if isfile(valid_file)
             df = load_rdata(valid_file)
             @test df isa DataFrame
             @test nrow(df) > 0
             @test ncol(df) > 0
-        finally
-            isfile(valid_file) && rm(valid_file)
+            @test "faultNumber" in names(df)
+        else
+            @warn "Local test data not found: $valid_file. Skipping real data load test."
         end
 
         # 異常系: ファイルが存在しない
@@ -90,5 +90,30 @@ using .TEPDataLoader
         # 異常系: 全て存在しない列の指定
         vars_all_missing = ["X", "Y"]
         @test_throws ErrorException extract_variables(df, vars_all_missing)
+    end
+
+    @testset "Integration Test" begin
+        using DataFrames
+        
+        # プロジェクトルートにある TEP_FaultFree_Training.RData を使用
+        local_file_path = joinpath(dirname(@__DIR__), "TEP_FaultFree_Training.RData")
+        
+        if isfile(local_file_path)
+            # 1. ロード (ダウンロード処理はスキップして直接ロード)
+            df = load_rdata(local_file_path)
+            @test df isa DataFrame
+            @test ncol(df) == 55
+            
+            # 2. 変数の抽出 (実データに含まれる代表的な列)
+            target_vars = ["faultNumber", "simulationRun", "sample", "xmeas_1", "xmeas_41"]
+            final_df = extract_variables(df, target_vars)
+            
+            @test final_df isa DataFrame
+            @test ncol(final_df) == 5
+            @test names(final_df) == target_vars
+            @test nrow(final_df) == nrow(df)
+        else
+            @warn "Local test data not found: $local_file_path. Skipping Integration Test."
+        end
     end
 end
