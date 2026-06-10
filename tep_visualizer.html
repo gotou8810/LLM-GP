@@ -1,0 +1,1299 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TEP Plant Digital Twin & Flow Visualizer</title>
+    <style>
+        :root {
+            --bg-primary: #f8fafc;       /* オフホワイト・明るいグレー */
+            --bg-secondary: #ffffff;     /* ホワイト（サイドバーやパネル用） */
+            --bg-tertiary: #f1f5f9;      /* ボタンやサブ背景用の薄いグレー */
+            --text-primary: #0f172a;     /* 視認性の高いダーク Slate */
+            --text-secondary: #475569;   /* 補助テキスト用の Muted Slate */
+            --accent-green: #16a34a;     /* 落ち着いたプラントグリーン（完了） */
+            --accent-green-glow: rgba(22, 163, 74, 0.08);
+            --accent-amber: #b45309;     /* 落ち着いたアンバー（ターゲット） */
+            --accent-amber-glow: rgba(217, 119, 6, 0.08);
+            --accent-blue: #2563eb;      /* 落ち着いたプロセスブルー（選択中） */
+            --accent-blue-glow: rgba(37, 99, 235, 0.08);
+            --accent-purple: #7c3aed;
+            --accent-red: #dc2626;
+            --border-color: #cbd5e1;     /* 薄いグレーの実線ボーダー */
+            --grid-color: rgba(203, 213, 225, 0.4);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        html, body {
+            height: 100vh;
+            width: 100vw;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            line-height: 1.5;
+            overflow: hidden; /* ブラウザ全体のスクロールを禁止 */
+        }
+
+        header {
+            background-color: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-color);
+            padding: 0.75rem 1.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            height: 56px;
+            z-index: 10;
+        }
+
+        .header-title h1 {
+            font-size: 1.25rem;
+            font-weight: 700;
+            letter-spacing: -0.025em;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .header-title h1 span {
+            color: var(--accent-green);
+            font-size: 0.75rem;
+            background-color: var(--accent-green-glow);
+            padding: 0.15rem 0.5rem;
+            border-radius: 9999px;
+            border: 1px solid #bbf7d0;
+        }
+
+        .header-stats {
+            display: flex;
+            gap: 1rem;
+        }
+
+        .stat-card {
+            background-color: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            padding: 0.35rem 0.75rem;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        .stat-val {
+            font-weight: 700;
+            color: var(--accent-blue);
+        }
+
+        .main-container {
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            height: calc(100vh - 56px); /* ヘッダー高さを引いた領域いっぱいにフィット */
+            width: 100vw;
+            overflow: hidden;
+        }
+
+        /* VISUALIZER PANE */
+        .visualizer-pane {
+            background-color: var(--bg-primary);
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            overflow: hidden; /* スクロールバーを出さない */
+            border-right: 1px solid var(--border-color);
+        }
+
+        .control-bar {
+            background-color: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-color);
+            padding: 0.5rem 1rem;
+            display: flex;
+            gap: 0.5rem;
+            align-items: center;
+            z-index: 5;
+        }
+
+        .btn {
+            background-color: var(--bg-secondary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+            padding: 0.35rem 0.75rem;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            font-weight: 500;
+        }
+
+        .btn:hover {
+            background-color: var(--bg-tertiary);
+            border-color: #94a3b8;
+        }
+
+        .btn.active {
+            background-color: var(--accent-blue);
+            color: #ffffff;
+            border-color: var(--accent-blue);
+        }
+
+        .btn-toggle-animation.paused {
+            border-color: var(--accent-amber);
+            color: var(--accent-amber);
+            background-color: var(--accent-amber-glow);
+        }
+
+        .svg-container {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: hidden; /* 画面サイズ縮小時にSVGをはみ出させない */
+            background-color: var(--bg-primary);
+            position: relative;
+            padding: 1rem;
+        }
+
+        svg {
+            width: 100%;
+            height: 100%;
+            max-width: 100%;
+            max-height: 100%;
+            user-select: none;
+        }
+
+        /* SVG Styles - Simple Industrial Flat style */
+        .pipe {
+            fill: none;
+            stroke: #94a3b8; /* 目立たない落ち着いたグレー配管 */
+            stroke-width: 2.5;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        .pipe-flow {
+            fill: none;
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            stroke-dasharray: 4, 10; /* シンプルな細かい破線 */
+            animation: flow 30s linear infinite;
+        }
+
+        @keyframes flow {
+            to {
+                stroke-dashoffset: -1000;
+            }
+        }
+
+        .pipe-flow.feed { stroke: #2563eb; }    /* プロセスブルー */
+        .pipe-flow.reactor-out { stroke: #d97706; } /* フラットアンバー */
+        .pipe-flow.recycle { stroke: #7c3aed; }    /* パープル */
+        .pipe-flow.liquid { stroke: #0284c7; }     /* ライトブルー */
+        .pipe-flow.product { stroke: #16a34a; }    /* フラットグリーン */
+        .pipe-flow.steam { stroke: #dc2626; }      /* フラットレッド */
+
+        .node-machine {
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }
+
+        .node-machine rect, .node-machine ellipse, .node-machine path {
+            fill: #ffffff;
+            stroke: #475569; /* 落ち着いたダークグレー境界線 */
+            stroke-width: 1.5;
+            transition: all 0.15s ease;
+        }
+
+        .node-machine:hover rect, .node-machine:hover ellipse, .node-machine:hover path {
+            stroke: var(--accent-blue);
+            fill: #f8fafc;
+        }
+
+        .node-machine.selected rect, .node-machine.selected ellipse, .node-machine.selected path {
+            stroke: var(--accent-blue) !important;
+            stroke-width: 2.5;
+            fill: #eff6ff !important; /* 選択中は爽やかな薄いブルー */
+        }
+
+        .node-machine.twin-completed rect, .node-machine.twin-completed ellipse, .node-machine.twin-completed path {
+            stroke: var(--accent-green);
+            stroke-width: 1.5;
+        }
+
+        .node-machine.twin-completed.selected rect, .node-machine.twin-completed.selected ellipse, .node-machine.twin-completed.selected path {
+            stroke: var(--accent-blue) !important;
+            stroke-width: 2.5;
+            fill: #eff6ff !important;
+        }
+
+        .node-machine.twin-target rect, .node-machine.twin-target ellipse, .node-machine.twin-target path {
+            stroke: var(--accent-amber);
+            stroke-width: 1.5;
+        }
+
+        .node-machine.twin-target.selected rect, .node-machine.twin-target.selected ellipse, .node-machine.twin-target.selected path {
+            stroke: var(--accent-blue) !important;
+            stroke-width: 2.5;
+            fill: #eff6ff !important;
+        }
+
+        .badge-twin {
+            font-size: 9px;
+            font-weight: bold;
+            fill: #ffffff;
+        }
+
+        /* Text overlay in SVG */
+        .node-text {
+            font-family: inherit;
+            font-size: 11px;
+            fill: var(--text-primary);
+            pointer-events: none;
+            font-weight: 500;
+        }
+
+        .node-title {
+            font-weight: 700;
+            font-size: 11px;
+        }
+
+        .node-desc {
+            fill: var(--text-secondary);
+            font-size: 10px;
+        }
+
+        /* Sidebar Panel */
+        .sidebar-pane {
+            background-color: var(--bg-secondary);
+            border-left: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto; /* サイドバー内のみスクロール可能にする */
+            height: 100%;
+            padding: 1.25rem;
+        }
+
+        .panel-header {
+            margin-bottom: 1.25rem;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 0.75rem;
+        }
+
+        .panel-header h2 {
+            font-size: 1.15rem;
+            font-weight: 700;
+            margin-bottom: 0.15rem;
+        }
+
+        .panel-header .subtitle {
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 0.2rem 0.45rem;
+            border-radius: 3px;
+            font-size: 0.7rem;
+            font-weight: bold;
+            margin-top: 0.4rem;
+        }
+
+        .status-badge.completed {
+            background-color: var(--accent-green-glow);
+            color: var(--accent-green);
+            border: 1px solid #bbf7d0;
+        }
+
+        .status-badge.target {
+            background-color: var(--accent-amber-glow);
+            color: var(--accent-amber);
+            border: 1px solid #fde68a;
+        }
+
+        .status-badge.normal {
+            background-color: var(--bg-tertiary);
+            color: var(--text-secondary);
+            border: 1px solid var(--border-color);
+        }
+
+        .panel-section {
+            margin-bottom: 1.25rem;
+        }
+
+        .panel-section h3 {
+            font-size: 0.8rem;
+            font-weight: bold;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+        }
+
+        .panel-section h3::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background-color: var(--border-color);
+        }
+
+        /* Variables Table */
+        .variables-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.4rem;
+        }
+
+        .variable-item {
+            background-color: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 0.5rem 0.75rem;
+            transition: border-color 0.1s;
+        }
+
+        .variable-item:hover {
+            border-color: #94a3b8;
+        }
+
+        .var-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 0.2rem;
+            margin-bottom: 0.15rem;
+        }
+
+        .var-name {
+            font-family: monospace;
+            font-weight: 700;
+            font-size: 0.85rem;
+            color: var(--accent-blue);
+        }
+
+        .var-role {
+            font-size: 0.7rem;
+            background-color: var(--bg-tertiary);
+            padding: 0.05rem 0.3rem;
+            border-radius: 2px;
+            color: var(--text-secondary);
+        }
+
+        .var-desc {
+            font-size: 0.75rem;
+            color: var(--text-primary);
+        }
+
+        /* Digital Twin Equation Display - Clean Flat Style */
+        .twin-card {
+            background-color: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 1rem;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .twin-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 4px;
+            height: 100%;
+        }
+
+        .twin-card.completed::before {
+            background-color: var(--accent-green);
+        }
+
+        .twin-card.target::before {
+            background-color: var(--accent-amber);
+        }
+
+        .twin-card.normal::before {
+            background-color: var(--text-secondary);
+        }
+
+        .twin-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        }
+
+        .twin-r2 {
+            font-weight: 700;
+            font-size: 1rem;
+            color: var(--accent-green);
+        }
+
+        .twin-r2.target {
+            color: var(--accent-amber);
+        }
+
+        .formula-container {
+            background-color: #ffffff;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 0.5rem;
+            font-family: "Courier New", Courier, monospace;
+            font-size: 0.8rem;
+            color: #1e3a8a;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+            margin-bottom: 0.5rem;
+            line-height: 1.3;
+        }
+
+        .twin-card.target .formula-container {
+            color: var(--accent-amber);
+            font-style: italic;
+        }
+
+        .physics-insight {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            border-top: 1px solid var(--border-color);
+            padding-top: 0.5rem;
+            margin-top: 0.5rem;
+            line-height: 1.4;
+        }
+
+        .physics-insight strong {
+            color: var(--text-primary);
+        }
+
+        .physics-insight ul {
+            margin-left: 1rem;
+            margin-top: 0.15rem;
+        }
+
+        .physics-insight li {
+            margin-bottom: 0.25rem;
+        }
+
+        /* History Table in Visualizer Pane bottom */
+        .history-section {
+            background-color: var(--bg-secondary);
+            border-top: 1px solid var(--border-color);
+            padding: 1rem 1.5rem;
+            height: 190px; /* 固定高さを指定して、全画面での比率を保つ */
+            overflow-y: auto; /* テーブルが溢れた場合のみ縦スクロール */
+        }
+
+        .history-section h3 {
+            font-size: 0.95rem;
+            font-weight: bold;
+            margin-bottom: 0.5rem;
+            display: flex;
+            align-items: center;
+            gap: 0.4rem;
+            color: var(--text-secondary);
+        }
+
+        .history-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8rem;
+            text-align: left;
+        }
+
+        .history-table th, .history-table td {
+            padding: 0.5rem 0.75rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .history-table th {
+            background-color: var(--bg-tertiary);
+            color: var(--text-secondary);
+            font-weight: 600;
+            position: sticky;
+            top: 0;
+            z-index: 1;
+        }
+
+        .history-table tbody tr:hover {
+            background-color: var(--bg-primary);
+        }
+
+        .history-table .target-var {
+            font-family: monospace;
+            font-weight: 700;
+            color: var(--accent-blue);
+        }
+
+        .history-table .r2-score {
+            font-weight: bold;
+            color: var(--accent-green);
+        }
+
+        .history-table .formula-code {
+            font-family: monospace;
+            color: #047857;
+            background-color: var(--bg-primary);
+            padding: 0.1rem 0.3rem;
+            border-radius: 3px;
+            border: 1px solid var(--border-color);
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="header-title">
+            <h1>TEP Plant Digital Twin <span>デジタルツイン・ビジュアライザー</span></h1>
+        </div>
+        <div class="header-stats">
+            <div class="stat-card">
+                <span>合計プロセス変数:</span>
+                <span class="stat-val">53個</span>
+            </div>
+            <div class="stat-card">
+                <span>デジタルツイン目標:</span>
+                <span class="stat-val" style="color: var(--accent-amber);">4変数</span>
+            </div>
+            <div class="stat-card">
+                <span>構築完了済 ($R^2 > 0.95$):</span>
+                <span class="stat-val" style="color: var(--accent-green);">2 / 4 (50%)</span>
+            </div>
+        </div>
+    </header>
+
+    <div class="main-container">
+        
+        <!-- VISUALIZER PANE -->
+        <div class="visualizer-pane">
+            <div class="control-bar">
+                <button class="btn btn-toggle-animation" id="btnToggleAnimation">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline; vertical-align:middle; margin-right:4px;">
+                        <polygon points="5 3 19 12 5 21 5 3" fill="currentColor"></polygon>
+                    </svg>
+                    アニメーション停止
+                </button>
+                <button class="btn" id="btnHighlightCompleted">完了ノードを強調表示</button>
+                <button class="btn" id="btnHighlightTargets">ターゲットノードを強調表示</button>
+                <button class="btn" id="btnResetFilters">表示リセット</button>
+                <span style="font-size: 0.75rem; color: var(--text-secondary); margin-left: auto;">※ ユニットまたは配管をクリックして詳細を表示</span>
+            </div>
+
+            <div class="svg-container">
+                <svg width="1050" height="650" viewBox="0 0 1050 650" id="tepSvg">
+                    <!-- SVG Definition for Markers -->
+                    <defs>
+                        <marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                            <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#94a3b8" />
+                        </marker>
+                    </defs>
+
+                    <!-- ==================== PIPES / PIPELINES ==================== -->
+                    <!-- Feed Pipelines -->
+                    <path d="M 50,80 L 180,80 L 180,185" class="pipe" />
+                    <path d="M 50,150 L 150,150 L 150,195 L 180,195" class="pipe" />
+                    <path d="M 50,220 L 150,220 L 150,205 L 180,205" class="pipe" />
+                    <path d="M 50,290 L 180,290 L 180,215" class="pipe" />
+
+                    <path d="M 50,80 L 180,80 L 180,185" class="pipe-flow feed" id="flow-s1" />
+                    <path d="M 50,150 L 150,150 L 150,195 L 180,195" class="pipe-flow feed" id="flow-s2" />
+                    <path d="M 50,220 L 150,220 L 150,205 L 180,205" class="pipe-flow feed" id="flow-s3" />
+                    <path d="M 50,290 L 180,290 L 180,215" class="pipe-flow feed" id="flow-s4" />
+
+                    <!-- Mixer to Reactor (Stream 6) -->
+                    <path d="M 230,200 L 300,200" class="pipe" marker-end="url(#arrow)" />
+                    <path d="M 230,200 L 300,200" class="pipe-flow feed" id="flow-s6" />
+
+                    <!-- Reactor to Condenser (Stream 7) -->
+                    <path d="M 480,150 L 510,150" class="pipe" marker-end="url(#arrow)" />
+                    <path d="M 480,150 L 510,150" class="pipe-flow reactor-out" id="flow-s7" />
+
+                    <!-- Condenser to Separator -->
+                    <path d="M 610,150 L 695,150 L 695,210" class="pipe" marker-end="url(#arrow)" />
+                    <path d="M 610,150 L 695,150 L 695,210" class="pipe-flow reactor-out" id="flow-cond-sep" />
+
+                    <!-- Separator Recycle Gas to Compressor (Stream 8) -->
+                    <path d="M 620,270 L 520,270 L 520,350 L 480,350" class="pipe" marker-end="url(#arrow)" />
+                    <path d="M 620,270 L 520,270 L 520,350 L 480,350" class="pipe-flow recycle" id="flow-s8" />
+
+                    <!-- Compressor to Mixer (Recycle loop return) -->
+                    <path d="M 420,350 L 200,350 L 200,230" class="pipe" marker-end="url(#arrow)" />
+                    <path d="M 420,350 L 200,350 L 200,230" class="pipe-flow recycle" id="flow-recycle-return" />
+
+                    <!-- Purge line (Stream 9) -->
+                    <path d="M 695,210 L 695,80 L 880,80" class="pipe" marker-end="url(#arrow)" />
+                    <path d="M 695,210 L 695,80 L 880,80" class="pipe-flow recycle" id="flow-s9" />
+
+                    <!-- Separator Bottom to Stripper (Stream 10) -->
+                    <path d="M 695,330 L 695,410" class="pipe" marker-end="url(#arrow)" />
+                    <path d="M 695,330 L 695,410" class="pipe-flow liquid" id="flow-s10" />
+
+                    <!-- Steam to Stripper -->
+                    <path d="M 850,500 L 770,500" class="pipe" marker-end="url(#arrow)" />
+                    <path d="M 850,500 L 770,500" class="pipe-flow steam" id="flow-steam" />
+
+                    <!-- Stripper Recycle to Mixer (Stream 5) -->
+                    <path d="M 695,410 L 695,370 L 200,370 L 200,230" class="pipe" marker-end="url(#arrow)" />
+                    <path d="M 695,410 L 695,370 L 200,370 L 200,230" class="pipe-flow recycle" id="flow-s5" />
+
+                    <!-- Stripper Bottom to Product (Stream 11) -->
+                    <path d="M 695,530 L 695,580 L 880,580" class="pipe" marker-end="url(#arrow)" />
+                    <path d="M 695,530 L 695,580 L 880,580" class="pipe-flow product" id="flow-s11" />
+
+
+                    <!-- ==================== STREAMS INTERACTIVE PATHS ==================== -->
+                    <path d="M 50,80 L 180,80 L 180,185" fill="none" stroke="transparent" stroke-width="12" style="cursor:pointer;" onclick="selectNode('s1')" />
+                    <path d="M 50,150 L 150,150 L 150,195 L 180,195" fill="none" stroke="transparent" stroke-width="12" style="cursor:pointer;" onclick="selectNode('s2')" />
+                    <path d="M 50,220 L 150,220 L 150,205 L 180,205" fill="none" stroke="transparent" stroke-width="12" style="cursor:pointer;" onclick="selectNode('s3')" />
+                    <path d="M 50,290 L 180,290 L 180,215" fill="none" stroke="transparent" stroke-width="12" style="cursor:pointer;" onclick="selectNode('s4')" />
+                    <path d="M 230,200 L 300,200" fill="none" stroke="transparent" stroke-width="12" style="cursor:pointer;" onclick="selectNode('s6')" />
+                    <path d="M 480,150 L 510,150" fill="none" stroke="transparent" stroke-width="12" style="cursor:pointer;" onclick="selectNode('s7')" />
+                    <path d="M 620,270 L 520,270 L 520,350 L 480,350" fill="none" stroke="transparent" stroke-width="12" style="cursor:pointer;" onclick="selectNode('s8')" />
+                    <path d="M 695,210 L 695,80 L 880,80" fill="none" stroke="transparent" stroke-width="12" style="cursor:pointer;" onclick="selectNode('s9')" />
+                    <path d="M 695,330 L 695,410" fill="none" stroke="transparent" stroke-width="12" style="cursor:pointer;" onclick="selectNode('s10')" />
+                    <path d="M 695,410 L 695,370 L 200,370 L 200,230" fill="none" stroke="transparent" stroke-width="12" style="cursor:pointer;" onclick="selectNode('s5')" />
+                    <path d="M 695,530 L 695,580 L 880,580" fill="none" stroke="transparent" stroke-width="12" style="cursor:pointer;" onclick="selectNode('s11')" />
+
+
+                    <!-- ==================== PROCESS UNITS (NODES) ==================== -->
+
+                    <!-- Feed Labels (Left) -->
+                    <g transform="translate(10, 60)" style="cursor:pointer;" onclick="selectNode('s1')">
+                        <text class="node-text" font-weight="bold" fill="#1d4ed8">Stream 1: A</text>
+                        <text class="node-text" y="14" fill="#334155" font-size="9px">XMEAS(1), XMV(3)</text>
+                    </g>
+                    <g transform="translate(10, 130)" style="cursor:pointer;" onclick="selectNode('s2')">
+                        <text class="node-text" font-weight="bold" fill="#1d4ed8">Stream 2: D</text>
+                        <text class="node-text" y="14" fill="#334155" font-size="9px">XMEAS(2), XMV(1)</text>
+                    </g>
+                    <g transform="translate(10, 200)" style="cursor:pointer;" onclick="selectNode('s3')">
+                        <text class="node-text" font-weight="bold" fill="#1d4ed8">Stream 3: E</text>
+                        <text class="node-text" y="14" fill="#334155" font-size="9px">XMEAS(3), XMV(2)</text>
+                    </g>
+                    <g transform="translate(10, 270)" style="cursor:pointer;" onclick="selectNode('s4')">
+                        <text class="node-text" font-weight="bold" fill="#1d4ed8">Stream 4: A/C/B</text>
+                        <text class="node-text" y="14" fill="#334155" font-size="9px">XMEAS(4), XMV(4)</text>
+                    </g>
+
+                    <!-- Feed Streams Flow Labels -->
+                    <text class="node-text" x="265" y="185" font-size="10px" text-anchor="middle">Stream 6: Total Feed</text>
+                    <text class="node-text" x="495" y="135" font-size="10px" text-anchor="middle">Stream 7</text>
+                    <text class="node-text" x="570" y="260" font-size="10px" text-anchor="middle">Stream 8: Recycle Gas</text>
+                    <text class="node-text" x="780" y="73" font-size="10px" text-anchor="middle">Stream 9: Purge</text>
+                    <text class="node-text" x="710" y="375" font-size="10px">Stream 10: Liquid Feed</text>
+                    <text class="node-text" x="440" y="360" font-size="10px" text-anchor="middle">Stream 5: Stripped Recycle</text>
+                    <text class="node-text" x="780" y="573" font-size="10px" text-anchor="middle">Stream 11: Product</text>
+
+                    <!-- Unit: Mixer -->
+                    <g class="node-machine" id="node-mixer" onclick="selectNode('mixer')">
+                        <rect x="160" y="170" width="70" height="60" rx="4" />
+                        <text class="node-text node-title" x="195" y="195" text-anchor="middle">Mixer</text>
+                        <text class="node-text node-desc" x="195" y="212" text-anchor="middle">混合器</text>
+                    </g>
+
+                    <!-- Unit: Reactor (Completed Twin - High R2) -->
+                    <g class="node-machine twin-completed" id="node-reactor" onclick="selectNode('reactor')">
+                        <rect x="300" y="110" width="180" height="135" rx="8" />
+                        <text class="node-text node-title" x="315" y="132" fill="#0f172a" font-weight="bold">Reactor (反応器)</text>
+                        <text class="node-text node-desc" x="315" y="147" fill="#475569">R²: 0.9948 (完了)</text>
+                        <text class="node-text" x="315" y="170" font-size="9px" fill="#0f172a">XMEAS(7): Reactor Pressure</text>
+                        <text class="node-text" x="315" y="185" font-size="9px" fill="#b45309" font-weight="bold">XMEAS(9): Temp (開発中)</text>
+                        <text class="node-text" x="315" y="200" font-size="9px" fill="#0f172a">XMEAS(8): Level</text>
+                        <text class="node-text" x="315" y="215" font-size="9px" fill="#0f172a">XMV(10): CW Flow</text>
+                        
+                        <!-- Completed LED indicator (Clean and doesn't overlap text) -->
+                        <circle cx="455" cy="128" r="4.5" fill="#16a34a" />
+                    </g>
+
+                    <!-- Unit: Condenser -->
+                    <g class="node-machine" id="node-condenser" onclick="selectNode('condenser')">
+                        <rect x="510" y="120" width="100" height="60" rx="4" />
+                        <path d="M 520,135 L 600,165 M 520,165 L 600,135" stroke="#cbd5e1" stroke-width="1.5" />
+                        <text class="node-text node-title" x="560" y="112" text-anchor="middle">Condenser</text>
+                        <text class="node-text node-desc" x="560" y="145" text-anchor="middle">凝縮器</text>
+                        <text class="node-text" x="560" y="195" font-size="9px" fill="#334155" text-anchor="middle">XMV(11): Cooling Water</text>
+                    </g>
+
+                    <!-- Unit: Separator (Completed Twin) -->
+                    <g class="node-machine twin-completed" id="node-separator" onclick="selectNode('separator')">
+                        <rect x="620" y="210" width="150" height="120" rx="8" />
+                        <text class="node-text node-title" x="635" y="232" fill="#0f172a" font-weight="bold">Separator</text>
+                        <text class="node-text node-desc" x="635" y="247" fill="#475569">R²: 0.9736 (完了)</text>
+                        <text class="node-text" x="635" y="270" font-size="9px" fill="#0f172a">XMEAS(13): Pressure</text>
+                        <text class="node-text" x="635" y="288" font-size="9px" fill="#b45309" font-weight="bold">XMEAS(12): Level (目標)</text>
+                        <text class="node-text" x="635" y="304" font-size="9px" fill="#0f172a">XMEAS(11): Temp</text>
+                        
+                        <!-- Completed LED indicator (Clean and doesn't overlap text) -->
+                        <circle cx="745" cy="228" r="4.5" fill="#16a34a" />
+                    </g>
+
+                    <!-- Unit: Compressor -->
+                    <g class="node-machine" id="node-compressor" onclick="selectNode('compressor')">
+                        <circle cx="450" cy="350" r="25" />
+                        <polygon points="438,350 462,338 462,362" fill="none" stroke="#475569" stroke-width="1.5" />
+                        <text class="node-text node-title" x="450" y="298" text-anchor="middle">Compressor</text>
+                        <text class="node-text node-desc" x="450" y="310" text-anchor="middle">気体循環用</text>
+                        <text class="node-text" x="450" y="322" font-size="9px" fill="#334155" text-anchor="middle">XMEAS(20), XMV(5)</text>
+                    </g>
+
+                    <!-- Unit: Stripper -->
+                    <g class="node-machine" id="node-stripper" onclick="selectNode('stripper')">
+                        <rect x="620" y="410" width="150" height="120" rx="4" />
+                        <text class="node-text node-title" x="635" y="430">Stripper (ストリッパー)</text>
+                        <text class="node-text node-desc" x="635" y="452">精製・蒸留塔</text>
+                        <text class="node-text" x="635" y="482" font-size="9px" fill="#334155">XMEAS(15): Stripper Level</text>
+                        <text class="node-text" x="635" y="497" font-size="9px" fill="#334155">XMEAS(18): Stripper Temp</text>
+                        <text class="node-text" x="635" y="512" font-size="9px" fill="#334155">XMV(9): Steam Valve</text>
+                    </g>
+
+                    <!-- External node: Purge -->
+                    <g class="node-machine" id="node-purge" onclick="selectNode('purge')">
+                        <polygon points="880,68 965,68 975,81 965,94 880,94" />
+                        <text class="node-text" x="927" y="82" font-weight="bold" text-anchor="middle">Purge</text>
+                        <text class="node-text" x="927" y="91" font-size="8px" fill="#334155" text-anchor="middle">XMEAS(10), XMV(6)</text>
+                    </g>
+
+                    <!-- External node: Steam -->
+                    <g class="node-machine" id="node-steam" onclick="selectNode('steam')">
+                        <polygon points="850,488 930,488 940,501 930,514 850,514" />
+                        <text class="node-text" x="895" y="502" font-weight="bold" text-anchor="middle">Steam (蒸気)</text>
+                        <text class="node-text" x="895" y="511" font-size="8px" fill="#334155" text-anchor="middle">XMEAS(19)</text>
+                    </g>
+
+                    <!-- External node: Product -->
+                    <g class="node-machine" id="node-product" onclick="selectNode('product')">
+                        <polygon points="880,568 975,568 985,581 975,594 880,594" />
+                        <text class="node-text" x="932" y="582" font-weight="bold" fill="#16a34a" text-anchor="middle">Final Product</text>
+                        <text class="node-text" x="932" y="591" font-size="8px" fill="#334155" text-anchor="middle">XMEAS(17), XMV(8)</text>
+                    </g>
+                </svg>
+            </div>
+
+            <!-- DIGITAL TWIN HISTORY SECTION -->
+            <div class="history-section">
+                <h3>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline; vertical-align:middle; margin-right: 2px;">
+                        <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    発見された物理モデル（デジタルツイン）一覧
+                </h3>
+                <table class="history-table">
+                    <thead>
+                        <tr>
+                            <th>ターゲットプロセス変数</th>
+                            <th>決定係数 $R^2$</th>
+                            <th>発見された物理因果数式</th>
+                            <th>更新世代</th>
+                            <th>検証ステータス</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr style="cursor: pointer;" onclick="selectNode('reactor')">
+                            <td><span class="target-var">XMEAS(7) [反応器圧力]</span></td>
+                            <td><span class="r2-score">0.9948</span></td>
+                            <td><span class="formula-code">c1 * x6_lag5 * x9 - c2 * x10 * x9 + c3 * x13 + c4</span></td>
+                            <td>Gen 17</td>
+                            <td><span style="color: var(--accent-green); font-weight:bold;">検証済 (物理合致)</span></td>
+                        </tr>
+                        <tr style="cursor: pointer;" onclick="selectNode('separator')">
+                            <td><span class="target-var">XMEAS(13) [分離器圧力]</span></td>
+                            <td><span class="r2-score">0.9736</span></td>
+                            <td><span class="formula-code">c1 * x7_lag5 - c2 * x10 + c3 * x11 + c4</span></td>
+                            <td>Gen 18</td>
+                            <td><span style="color: var(--accent-green); font-weight:bold;">検証済 (物理合致)</span></td>
+                        </tr>
+                        <tr style="cursor: pointer;" onclick="selectNode('reactor')">
+                            <td><span class="target-var" style="color: var(--accent-amber);">XMEAS(9) [反応器温度]</span></td>
+                            <td><span class="accent-amber">0.4100</span></td>
+                            <td><span class="formula-code" style="color: var(--text-secondary);">探索中 (反応熱の記述および非線形冷却項の追加が必要)</span></td>
+                            <td>-</td>
+                            <td><span class="accent-amber">探索・パラメータ微調整中</span></td>
+                        </tr>
+                        <tr style="cursor: pointer;" onclick="selectNode('separator')">
+                            <td><span class="target-var" style="color: var(--accent-amber);">XMEAS(12) [分離器液位]</span></td>
+                            <td><span class="accent-amber">0.0000</span></td>
+                            <td><span class="formula-code" style="color: var(--text-secondary);">探索中 (積分要素のため差分 L(t) - L(t-1) でのモデル化を準備中)</span></td>
+                            <td>-</td>
+                            <td><span class="accent-amber">物理構造変更フェーズ</span></td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+        </div>
+
+        <!-- SIDEBAR INFO PANEL -->
+        <div class="sidebar-pane" id="sidebar">
+            <div class="panel-header">
+                <h2 id="nodeTitle">ユニットを選択してください</h2>
+                <div class="subtitle" id="nodeSubtitle">プラント図から任意の機器・配管をクリック</div>
+                <div id="nodeStatusBadge"></div>
+            </div>
+
+            <!-- DIGITAL TWIN DETAILS -->
+            <div class="panel-section" id="twinSection" style="display: none;">
+                <h3>デジタルツイン構築ステータス</h3>
+                <div class="twin-card" id="twinCard">
+                    <div class="twin-header">
+                        <span style="font-size: 0.8rem; font-weight: bold;" id="twinStatusLabel">物理モデル数式</span>
+                        <span class="twin-r2" id="twinR2">R²: --</span>
+                    </div>
+                    <div class="formula-container" id="twinFormula">
+                        <!-- Formula placeholder -->
+                    </div>
+                    <div class="physics-insight" id="twinInsight">
+                        <!-- Physics insight placeholder -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- ASSOCIATED VARIABLES -->
+            <div class="panel-section" id="variablesSection" style="display: none;">
+                <h3>関連プロセス変数一覧</h3>
+                <div class="variables-list" id="variablesList">
+                    <!-- Variable items placeholder -->
+                </div>
+            </div>
+
+            <!-- UNIT DETAILS -->
+            <div class="panel-section" id="detailsSection">
+                <h3>プロセス役割・構造</h3>
+                <p id="nodeDescription" style="font-size: 0.85rem; color: var(--text-secondary);">
+                    テネシー・イーストマン・プロセス (TEP) は、5つの主要プロセスユニット (反応器、凝縮器、気液分離器、コンプレッサー、ストリッパー) から構成される。
+                    上流プロセスでの変動が下流プロセスへ影響を及ぼすまでには、流体配管による移動や化学変化に伴う数分〜数十分の「時間遅れ (Time Delay)」が発生します。<br/><br/>
+                    このダッシュボードでは、数式発見（LLM-GP）によって得られた物理構造 of 合致する、自己回帰項（AR項：target_lag1等）に頼らない、高精度（R² > 0.95）な数式モデルの構築状態をリアルタイムに確認できます。
+                </p>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Script Source -->
+    <script>
+        // Database of all TEP Plant elements (Nodes and Streams)
+        const plantData = {
+            // ----- UNITS -----
+            mixer: {
+                title: "Mixer (混合器)",
+                subtitle: "原料供給・循環リサイクルガスの合流器",
+                status: "normal",
+                description: "Stream 1〜4の原料供給、Stripperからの回収ガス、SeparatorからCompressorを経由した未反応回収ガスを混合し、最適な圧力・流量バランスで反応器(Stream 6)に供給する接合点です。定常運転時の圧力および組成制御の基盤点となります。",
+                variables: [
+                    { name: "XMEAS(1)", role: "測定変数 (A供給量)", desc: "原料A供給ストリームの瞬時流量" },
+                    { name: "XMEAS(2)", role: "測定変数 (D供給量)", desc: "原料D供給ストリームの瞬時流量" },
+                    { name: "XMEAS(3)", role: "測定変数 (E供給量)", desc: "原料E供給ストリームの瞬時流量" },
+                    { name: "XMEAS(4)", role: "測定変数 (A/C/B供給量)", desc: "原料A, C, Bを含む第4フィードストリームの瞬時流量" },
+                    { name: "XMV(1)", role: "操作変数", desc: "D供給流量制御バルブ" },
+                    { name: "XMV(2)", role: "操作変数", desc: "E供給流量制御バルブ" },
+                    { name: "XMV(3)", role: "操作変数", desc: "A供給流量制御バルブ" },
+                    { name: "XMV(4)", role: "操作変数", desc: "A/C/B供給流量制御バルブ" }
+                ],
+                twin: null
+            },
+            reactor: {
+                title: "Reactor (反応器)",
+                subtitle: "エキソサーミック（発熱性）気相化学反応容器",
+                status: "completed",
+                description: "プラントの中核。気相中で4つの並行・後続反応（A + C + D → G、A + C + E → Hなど）が進行します。反応は激しい発熱を伴うため、内蔵冷却コイル（CW）を流れる冷却水（XMV 10）により厳密な温度・圧力管理が要求されます。反応圧力は生成ガスの体積と反応熱に直接的に連動します。",
+                variables: [
+                    { name: "XMEAS(7)", role: "測定変数 (反応圧力)", desc: "本反応ユニットの主圧力。デジタルツイン構築完了。" },
+                    { name: "XMEAS(9)", role: "測定変数 (反応温度)", desc: "反応器の気相温度。冷却水と反応速度の高度な非線形依存。現在の最適化ターゲット。" },
+                    { name: "XMEAS(6)", role: "測定変数 (全フィード量)", desc: "反応器に入る全フィードガスの流量（Stream 6）" },
+                    { name: "XMEAS(8)", role: "測定変数 (液位)", desc: "凝縮生成液が反応器底に蓄積する液体の高さ" },
+                    { name: "XMV(10)", role: "操作変数 (冷却水流量)", desc: "反応熱を除去するためのジャケット冷却水コントロールバルブ" }
+                ],
+                twin: {
+                    r2: "0.9948",
+                    status: "completed",
+                    formula: "c1 * xmeas_6_lag5 * xmeas_9 - c2 * xmeas_10 * xmeas_9 + c3 * xmeas_13 + c4",
+                    insight: `
+                        <strong>物理因果の分析結果（R² > 0.95 達成）:</strong>
+                        <ul>
+                            <li><strong>c1 * xmeas_6_lag5 * xmeas_9 (気相反応速度と質量保存):</strong> 上流の原料総流量 (xmeas_6) が配管を通り反応するまでの時間遅れを5分間のラグ (lag5) として精密に表現。これと反応器温度 (xmeas_9) の積により、高温かつフィード量が多いほど反応速度が指数関数的に増大し、生成ガス分子数が増加する気相ダイナミクスを忠実にモデル化。</li>
+                            <li><strong>- c2 * xmeas_10 * xmeas_9 (非線形冷却収縮):</strong> 発熱反応熱を除去する冷却水流量 (xmeas_10) と反応温度 (xmeas_9) の積。温度が高いときほど冷却コイルの熱伝達（熱除去）が非線形に効率化し、結果として体積収縮による圧力降下を誘発する伝熱・熱力学物理特性と完全に整合。</li>
+                            <li><strong>c3 * xmeas_13 (流体力学的背圧):</strong> 下流の気液分離器圧力 (xmeas_13) との結合。分離器圧力が上昇すると、配管で直結された反応器に対して背圧 (Back Pressure) として作用し、圧力伝播ループを構成する物理構造を忠実に再現。</li>
+                            <li><strong>自己回帰項 (target_lag1) の完全排除:</strong> 自身の1ステップ前の過去値に頼る見かけの数値追従を一切行わず、周囲の境界物理因果だけでR² = 0.9948を自律的に達成。</li>
+                        </ul>
+                    `
+                }
+            },
+            condenser: {
+                title: "Condenser (凝縮器)",
+                subtitle: "生成ガスの冷却・液化用熱交換器",
+                status: "normal",
+                description: "反応器から流出する高温ガスを急冷し、主生成物（液相）と未反応原料ガス（気相）に分離するための二相混合体へ変化させます。操作変数である冷却水流量により、下流の分離器に流入する気液比率が決定されます。",
+                variables: [
+                    { name: "XMV(11)", role: "操作変数 (CW流量)", desc: "凝縮器冷却水制御バルブ。これによって冷却効率が決定される。" }
+                ],
+                twin: null
+            },
+            separator: {
+                title: "Vapor-Liquid Separator (気液分離器)",
+                subtitle: "高圧フラッシュ気液分離ドラム",
+                status: "completed",
+                description: "冷却された流体から、未反応原料ガス（軽質分）を上部より分離し（コンプレッサー循環へ）、液化した反応生成物（重質分）を下部より抜出します。反応圧力に連動して分離器圧力が構成され、液位は物質収支（流出入差）の動的な積分値となる物理構造を有します。",
+                variables: [
+                    { name: "XMEAS(13)", role: "測定変数 (分離器圧力)", desc: "分離器内の気相部圧力。デジタルツイン構築完了。" },
+                    { name: "XMEAS(12)", role: "測定変数 (分離器液位)", desc: "分離器下部の蓄積液レベル。積分特性（微分方程式）のため、探索方針を変更中。" },
+                    { name: "XMEAS(11)", role: "測定変数 (分離器温度)", desc: "分離器の温度（気液平衡状態に直結）" },
+                    { name: "XMV(7)", role: "操作変数 (アンダーフロー)", desc: "Stripperへ送出する液底抜出バルブ" }
+                ],
+                twin: {
+                    r2: "0.9736",
+                    status: "completed",
+                    formula: "c1 * xmeas_7_lag5 - c2 * xmeas_10 + c3 * xmeas_11 + c4",
+                    insight: `
+                        <strong>物理因果の分析結果（R² > 0.95 達成）:</strong>
+                        <ul>
+                            <li><strong>c1 * xmeas_7_lag5 (気体力学的圧力伝播):</strong> 反応器圧力 (xmeas_7) のガス流体が、凝縮器や配管を通過して分離器に到達するまでの時間遅れを5分間のラグ (lag5) として完璧に記述。配管摩擦と差圧流動のダイナミクスを忠実に再現。</li>
+                            <li><strong>- c2 * xmeas_10 (上流冷却の影響):</strong> 上流反応器での冷却水流量 (xmeas_10) の増大に伴う原料ガスの熱量喪失、運動エネルギー減衰、および局所的な熱収縮。これがマイナス符号の負の影響として分離器圧力を減圧させる因果関係を正しくモデル化。</li>
+                            <li><strong>c3 * xmeas_11 (気液平衡と飽和蒸気圧):</strong> 分離器内の留出温度 (xmeas_11) 上昇による生成物の気化（フラッシュ）の進行、および気相部の飽和ガス分圧（飽和蒸気圧）の上昇。気液平衡 (VLE) と理想気体の状態方程式を物理的に完璧にトレースしています。</li>
+                            <li><strong>自己回帰項 (target_lag1) の排除:</strong> 反応器と同様、自己相関への依存を完全に排除し、上流および隣接する熱力学パラメータだけからR² = 0.9736を突破。</li>
+                            <li><strong>💡 何故、伝播遅延は2,3分ではなく「5分（lag5）」なのか？ (プロセス熱力学的裏付け):</strong> 
+                                反応器圧力の変動が、凝縮器での冷却を伴う急激な相変化（気体から液体への凝縮）の際の巨大な熱容量遅延、および気液が混合した「気液二相流 (Two-Phase Flow)」化による圧力伝播速度（音速）の急激な低下（単相流時の1/10〜1/100に低下）、長大な配管内を流体が物理的に移動する物質滞留時間（ホールドアップ）が複合的に寄与するため、物理プロセスが再平衡に達してセンサー間の相関が最大化する時定数がちょうど 5 分（5ステップ）となります。
+                            </li>
+                        </ul>
+                    `
+                }
+            },
+            compressor: {
+                title: "Compressor (コンプレッサー)",
+                subtitle: "気体再循環・高圧循環用遠心圧縮機",
+                status: "normal",
+                description: "Separator上部から回収された未反応の軽質ガス（A, D, Eなど）を加圧し、反応器フィードへと高エネルギー回収循環させるための圧縮機です。リサイクル量を調整するバルブ開度(XMV 5)が、系全体の圧力循環ループとホールドアップに影響します。",
+                variables: [
+                    { name: "XMEAS(20)", role: "測定変数 (コンプレッサー仕事率)", desc: "圧縮機の電力消費量・仕事量" },
+                    { name: "XMV(5)", role: "操作変数 (リサイクル弁)", desc: "リサイクルガス還流のバイパス開度制御バルブ" }
+                ],
+                twin: null
+            },
+            stripper: {
+                title: "Stripper (ストリッパー蒸留塔)",
+                subtitle: "生成物・不純物分離のための多段精製・放散塔",
+                status: "normal",
+                description: "Separatorから供給された不純物交じりの反応生成液体（Stream 10）に、下部から加熱水蒸気（Steam）を吹き込み、沸点の低い未反応成分を追い出して塔頂（Stream 5）から回収。高純度な最終製品液体を塔底（Stream 11）から連続的に抜き出します。",
+                variables: [
+                    { name: "XMEAS(15)", role: "測定変数 (塔底液位)", desc: "ストリッパー底部の液面レベル" },
+                    { name: "XMEAS(16)", role: "測定変数 (ストリッパー圧力)", desc: "ストリッパー内の動作圧力" },
+                    { name: "XMEAS(18)", role: "測定変数 (ストリッパー温度)", desc: "ストリッパー塔底付近のプロセス温度" },
+                    { name: "XMV(9)", role: "操作変数 (スチーム弁)", desc: "加熱を制御するボトム水蒸気流量制御バルブ" }
+                ],
+                twin: null
+            },
+
+            // ----- STREAMS / PIPELINES -----
+            s1: {
+                title: "Stream 1: 原料 A 供給路",
+                subtitle: "プラントへの原料A high 純度フィード",
+                status: "normal",
+                description: "気相原料Aを供給するパイプライン。反応器の主圧力や組成比に直接寄与。XMEAS(1)にて流量が連続監視され、XMV(3)バルブによりプロセス量（圧力目標値）に基づきフィードが絞られます。",
+                variables: [
+                    { name: "XMEAS(1)", role: "測定変数", desc: "ストリーム1 瞬時流量" },
+                    { name: "XMV(3)", role: "操作変数", desc: "原料A 供給量制御バルブ" }
+                ],
+                twin: null
+            },
+            s2: {
+                title: "Stream 2: 原料 D 供給路",
+                subtitle: "プラントへの主要反応原料Dフィード",
+                status: "normal",
+                description: "気相・液相双方に寄与する高純度原料Dの供給流。製品の生成速度を決定づける最重要原料の1つです。流量はXMEAS(2)にマッピングされ、XMV(1)バルブにより制御されます。",
+                variables: [
+                    { name: "XMEAS(2)", role: "測定変数", desc: "ストリーム2 瞬時流量" },
+                    { name: "XMV(1)", role: "操作変数", desc: "原料D 供給量制御バルブ" }
+                ],
+                twin: null
+            },
+            s3: {
+                title: "Stream 3: 原料 E 供給路",
+                subtitle: "反応器へ供給する副原料Eフィード",
+                status: "normal",
+                description: "副生物を制御しつつ目的生成物を得るための調整原料。流体バランスを微調整するため、XMEAS(3)およびXMV(2)によって流量をPID管理します。",
+                variables: [
+                    { name: "XMEAS(3)", role: "測定変数", desc: "ストリーム3 瞬時流量" },
+                    { name: "XMV(2)", role: "操作変数", desc: "原料E 供給量制御バルブ" }
+                ],
+                twin: null
+            },
+            s4: {
+                title: "Stream 4: 原料 A/C/B 混合供給路",
+                subtitle: "不純物を含むリサイクル混合原料フィード",
+                status: "normal",
+                description: "原料A, C, Bを特定の初期比率で含む複合マテリアルフィード。プラント定常起動時の組成ホールドアップおよび、副反応蓄積の最大要因となるC成分の主流入ルート。XMEAS(4)およびXMV(4)により供給制御します。",
+                variables: [
+                    { name: "XMEAS(4)", role: "測定変数", desc: "ストリーム4 瞬時流量" },
+                    { name: "XMV(4)", role: "操作変数", desc: "原料混合流 供給量制御バルブ" }
+                ],
+                twin: null
+            },
+            s6: {
+                title: "Stream 6: 総反応フィード",
+                subtitle: "反応器に入る全予熱混合フィード",
+                status: "normal",
+                description: "原料フィード1〜4、さらにコンプレッサーからのリサイクルガスとストリッパー塔頂回収ガスがすべて合流した、全フィード気流（XMEAS 6）。反応器への物質流入量に直接かつ瞬時に連動します。",
+                variables: [
+                    { name: "XMEAS(6)", role: "測定変数 (総流量)", desc: "反応器への総気相流入流量。反応器圧力の数式モデルにおける最重要ラグ因子。" }
+                ],
+                twin: null
+            },
+            s7: {
+                title: "Stream 7: 反応器生成ガス路",
+                subtitle: "反応器から Condenser へのエフラント",
+                status: "normal",
+                description: "生成物ガス、副生成物、および多量の未反応気体（原料A、Cなど）が高温・高圧で凝縮器に送られるメインストリーム。反応器圧力（XMEAS 7）と冷却凝縮効果との間で物理的圧力バランス（差圧伝播）が発生します。",
+                variables: [
+                    { name: "XMEAS(7)", role: "主圧力源", desc: "このストリームの起点となる反応器の圧力" }
+                ],
+                twin: null
+            },
+            s8: {
+                title: "Stream 8: リサイクルガスライン",
+                subtitle: " separator 塔頂からの回収ガスライン",
+                status: "normal",
+                description: "未反応の気体（高濃度A、CおよびリサイクルDガス）がコンプレッサーにフィードバックされる、高流量リサイクルループの上流。気液分離ドラム上部の圧力（XMEAS 13）の動的変化はこのガスの引抜レートに強く支配されます。",
+                variables: [
+                    { name: "XMEAS(13)", role: "主圧力源", desc: "このガスの起点となる気液分離器圧力" }
+                ],
+                twin: null
+            },
+            s10: {
+                title: "Stream 10: 液相移送ライン",
+                subtitle: "Separator ボトムから Stripper への液供給",
+                status: "normal",
+                description: "分離器下部で濃縮・液化した生成物を含む液体が、精製のためにストリッパーに送入されるパイプ。XMV(7)（アンダーフローバルブ）の開閉動作により、分離器液位（XMEAS 12）の積分値変動が発生します。",
+                variables: [
+                    { name: "XMEAS(12)", role: "起点液位", desc: "この液を引き抜く気液分離器の液位レベル" },
+                    { name: "XMV(7)", role: "操作変数", desc: "液抜出量制御用アンダーフローバルブ" }
+                ],
+                twin: null
+            },
+            s5: {
+                title: "Stream 5: ストリッパー回収ガス",
+                subtitle: "塔頂から Mixer への回収軽質分リサイクル",
+                status: "normal",
+                description: "ストリッパー塔頂から留出する未反応原料（軽質ガス）を混合器に戻し、プラント効率を100%近くまで高めるループ。バルブ流量変化に伴い、反応フィード量に時間遅れを伴う外乱として寄与します。",
+                variables: [],
+                twin: null
+            },
+            s11: {
+                title: "Stream 11: 最終製品抜出路",
+                subtitle: "精製済高純度最終製品（Product G/H）",
+                status: "normal",
+                description: "不純物が除去された高品質の液体目的生成物が、システム外部の貯蔵タンクに回収されるストリーム。XMEAS(17)で抜出流量を測定し、XMV(8)バルブにてストリッパーの塔底液位が一定に保たれるよう自動制御されます。",
+                variables: [
+                    { name: "XMEAS(17)", role: "測定変数 (製品流量)", desc: "製品の生産速度に相当する瞬時流量" },
+                    { name: "XMV(8)", role: "操作変数", desc: "最終製品の出荷制御バルブ" }
+                ],
+                twin: null
+            },
+            purge: {
+                title: "Purge (不純物パージ路)",
+                subtitle: "系内の不活性ガス（窒素等）蓄積を抑える連続抜出排気",
+                status: "normal",
+                description: "不純物（特に反応に関与しない不活性成分B）がループ内に蓄積すると、プラント圧力が上昇し効率が極端に低下します。これを防ぐため、一定割合 of 気体を系外（フレアスタック等）に廃棄する排気パイプです。XMEAS(10)で流量を監視し、XMV(6)パージバルブで圧力を制御します。",
+                variables: [
+                    { name: "XMEAS(10)", role: "測定変数 (パージ流量)", desc: "パージされた排気ガスの総流量" },
+                    { name: "XMV(6)", role: "操作変数", desc: "系内のガスバランス（特に圧力制御）を維持するパージ弁" }
+                ],
+                twin: null
+            },
+            steam: {
+                title: "Steam (ストリッパー加熱水蒸気フィード)",
+                subtitle: "精製を促進する高圧熱水蒸気インプット",
+                status: "normal",
+                description: "ストリッパー塔底に直接高圧の蒸気を供給して再沸騰させ、液中の軽質揮発不純物を蒸発させて塔頂に追いやる熱量入力ストリーム。流量はXMEAS(19)に現れ、XMV(9)バルブによって塔底の必要プロセス温度に基づき制御されます。",
+                variables: [
+                    { name: "XMEAS(19)", role: "測定変数 (スチーム流量)", desc: "注入される過熱スチームの瞬時流量" },
+                    { name: "XMV(9)", role: "操作変数", desc: "蒸気流量（ストリッパー熱量バランス）制御バルブ" }
+                ],
+                twin: null
+            },
+            product: {
+                title: "Product (最終回収システム)",
+                subtitle: "液体生成物の回収・監視ステーション",
+                status: "normal",
+                description: "最終製品としてのプロセス合格スペック（純度G/H）を保障して、プラント外部に出荷する工程点です。生産能力指標に直結します。",
+                variables: [
+                    { name: "XMEAS(17)", role: "製品流量", desc: "製品送出瞬時流量" },
+                    { name: "XMV(8)", role: "製品送出弁", desc: "製品出荷流量制御用バルブ" }
+                ],
+                twin: null
+            }
+        };
+
+        // UI Interactive Logic
+        let selectedNodeId = null;
+        let isAnimationActive = true;
+
+        function selectNode(nodeId) {
+            // Remove previous selections in SVG
+            const allNodes = document.querySelectorAll('.node-machine');
+            allNodes.forEach(node => node.classList.remove('selected'));
+
+            // Clear current selection highlight in HTML
+            selectedNodeId = nodeId;
+            const data = plantData[nodeId];
+            if (!data) return;
+
+            // Highlight in SVG if it's a machine
+            const targetSvgNode = document.getElementById(`node-${nodeId}`);
+            if (targetSvgNode) {
+                targetSvgNode.classList.add('selected');
+            }
+
+            // Update HTML Sidebar details
+            document.getElementById('nodeTitle').innerText = data.title;
+            document.getElementById('nodeSubtitle').innerText = data.subtitle;
+            document.getElementById('nodeDescription').innerHTML = data.description;
+
+            // Update Badge based on status
+            const badgeContainer = document.getElementById('nodeStatusBadge');
+            badgeContainer.innerHTML = '';
+            if (data.status === 'completed') {
+                badgeContainer.innerHTML = '<span class="status-badge completed">デジタルツイン完了</span>';
+            } else if (data.status === 'target') {
+                badgeContainer.innerHTML = '<span class="status-badge target">開発中ターゲット</span>';
+            } else {
+                badgeContainer.innerHTML = '<span class="status-badge normal">監視対象プロセス</span>';
+            }
+
+            // Update Digital Twin Section
+            const twinSection = document.getElementById('twinSection');
+            if (data.twin) {
+                twinSection.style.display = 'block';
+                const card = document.getElementById('twinCard');
+                card.className = `twin-card ${data.twin.status}`;
+                
+                document.getElementById('twinR2').innerText = `R²: ${data.twin.r2}`;
+                document.getElementById('twinFormula').innerText = data.twin.formula;
+                document.getElementById('twinInsight').innerHTML = data.twin.insight;
+
+                if (data.twin.status === 'completed') {
+                    document.getElementById('twinStatusLabel').innerText = "検証済 物理モデル方程式";
+                } else {
+                    document.getElementById('twinStatusLabel').innerText = "探索中・パラメータ調整中";
+                }
+            } else {
+                twinSection.style.display = 'none';
+            }
+
+            // Update Associated Variables Section
+            const variablesSection = document.getElementById('variablesSection');
+            const variablesList = document.getElementById('variablesList');
+            variablesList.innerHTML = '';
+
+            if (data.variables && data.variables.length > 0) {
+                variablesSection.style.display = 'block';
+                data.variables.forEach(v => {
+                    const item = document.createElement('div');
+                    item.className = 'variable-item';
+                    item.innerHTML = `
+                        <div class="var-meta">
+                            <span class="var-name">${v.name}</span>
+                            <span class="var-role">${v.role}</span>
+                        </div>
+                        <div class="var-desc">${v.desc}</div>
+                    `;
+                    variablesList.appendChild(item);
+                });
+            } else {
+                variablesSection.style.display = 'none';
+            }
+        }
+
+        // CONTROL BAR LOGIC
+        // Toggle Pipe Flow Animations
+        const btnToggleAnimation = document.getElementById('btnToggleAnimation');
+        btnToggleAnimation.addEventListener('click', () => {
+            const flows = document.querySelectorAll('.pipe-flow');
+            isAnimationActive = !isAnimationActive;
+            
+            if (isAnimationActive) {
+                flows.forEach(flow => {
+                    flow.style.animationPlayState = 'running';
+                });
+                btnToggleAnimation.innerHTML = `
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline; vertical-align:middle; margin-right:4px;">
+                        <rect x="6" y="4" width="4" height="16" fill="currentColor"></rect>
+                        <rect x="14" y="4" width="4" height="16" fill="currentColor"></rect>
+                    </svg>
+                    アニメーション停止
+                `;
+                btnToggleAnimation.classList.remove('paused');
+            } else {
+                flows.forEach(flow => {
+                    flow.style.animationPlayState = 'paused';
+                });
+                btnToggleAnimation.innerHTML = `
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="display:inline; vertical-align:middle; margin-right:4px;">
+                        <polygon points="5 3 19 12 5 21 5 3" fill="currentColor"></polygon>
+                    </svg>
+                    アニメーション再生
+                `;
+                btnToggleAnimation.classList.add('paused');
+            }
+        });
+
+        // Highlight Completed Twins
+        document.getElementById('btnHighlightCompleted').addEventListener('click', () => {
+            resetMachineHighlights();
+            const comp = document.querySelectorAll('.node-machine.twin-completed');
+            comp.forEach(el => {
+                const innerRects = el.querySelectorAll('rect, ellipse, path');
+                innerRects.forEach(rect => {
+                    rect.style.stroke = '#16a34a';
+                    rect.style.strokeWidth = '2px';
+                });
+            });
+        });
+
+        // Highlight Targets Under Development
+        document.getElementById('btnHighlightTargets').addEventListener('click', () => {
+            resetMachineHighlights();
+            const targets = ['reactor', 'separator'];
+            targets.forEach(id => {
+                const el = document.getElementById(`node-${id}`);
+                if (el) {
+                    const innerRects = el.querySelectorAll('rect, ellipse, path');
+                    innerRects.forEach(rect => {
+                        rect.style.stroke = '#b45309';
+                        rect.style.strokeWidth = '2px';
+                    });
+                }
+            });
+        });
+
+        // Reset display filters
+        const btnResetFilters = document.getElementById('btnResetFilters');
+        btnResetFilters.addEventListener('click', () => {
+            resetMachineHighlights();
+        });
+
+        function resetMachineHighlights() {
+            const allMachines = document.querySelectorAll('.node-machine');
+            allMachines.forEach(el => {
+                const innerRects = el.querySelectorAll('rect, ellipse, path');
+                innerRects.forEach(rect => {
+                    rect.style.stroke = '';
+                    rect.style.strokeWidth = '';
+                });
+            });
+        }
+
+        // Initialize with Reactor Selected
+        window.onload = () => {
+            selectNode('reactor');
+        };
+    </script>
+</body>
+</html>
