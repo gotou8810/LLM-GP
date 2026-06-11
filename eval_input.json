@@ -1,0 +1,9 @@
+{
+  "formula": "xmeas_7_lag5 + c[1]*xmeas_10 + c[2]*xmeas_11",
+  "target_variable": "xmeas_13",
+  "dataset_path": "TEP_Faulty_Training.RData",
+  "hyperparameters": {
+    "max_steps": 5000,
+    "search_range": [-10.0, 10.0]
+  }
+}

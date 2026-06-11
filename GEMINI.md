@@ -63,6 +63,8 @@ Gemini CLI supports agent-as-tool for sub-agent dispatch. Skills with "Parallel 
 - Human review required each phase; use `-y` only for intentional fast-track
 - Keep steering current and verify alignment with `/kiro-spec-status`
 - Follow the user's instructions precisely, and within that scope act autonomously: gather the necessary context and complete the requested work end-to-end in this run, asking questions only when essential information is missing or the instructions are critically ambiguous.
+- **TEP_FLOW_DIAGRAM 更新規則**:
+  - 今後 `TEP_FLOW_DIAGRAM.md` を更新または新たなデジタルツインターゲットを追加・修正する際は、必ずその数式が導出された根拠となる学術的・化学工学的・制御工学的な方程式（例：理想気体の状態方程式、ニュートンの冷却法則、Clausius-Clapeyron/Antoine式、P制御ループ方程式の逆解きなど）を LaTeX 形式（`$$...$$` や `$...$`）で明記し、科学的な因果関係と物理的整合性を詳細に説明すること。
 
 ## Steering Configuration
 - Load entire `.kiro/steering/` as project memory

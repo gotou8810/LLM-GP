@@ -90,7 +90,9 @@ function main(in_io::IO=stdin, out_io::IO=stdout)
                         err = abs(pred - target_sample[i])
                         push!(errors, min(err, 20.0))
                     end
-                catch
+                catch e
+                    # Print error details to stderr for debugging
+                    println(stderr, "Evaluation error for formula [", formula_str, "]: ", e)
                     push!(errors, 20.0)
                 end
             end

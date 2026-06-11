@@ -33,11 +33,23 @@ def main():
     
     args = parser.parse_args()
 
+    # Normalize target variable to match lowercase Julia column names (e.g. xmeas_15 instead of XMEAS(15))
+    import re
+    target_var = args.target
+    m_meas = re.match(r"XMEAS\((\d+)\)", target_var, re.IGNORECASE)
+    m_mv = re.match(r"XMV\((\d+)\)", target_var, re.IGNORECASE)
+    if m_meas:
+        target_normalized = f"xmeas_{m_meas.group(1)}"
+    elif m_mv:
+        target_normalized = f"xmv_{m_mv.group(1)}"
+    else:
+        target_normalized = target_var.lower()
+
     # 1. Julia実行環境の準備
     # プロジェクトルートにある src/NumericalEvaluator/cli.jl を指すように設定
     julia_script = os.path.join("src", "NumericalEvaluator", "cli.jl")
     runner = SubprocessWrapper(script_path=julia_script)
-    
+
     # データセットの存在確認と初期化
     logger.info(f"Initializing data with dataset: {args.dataset}")
     try:
@@ -57,7 +69,7 @@ def main():
         if not api_key:
             logger.warning("GOOGLE_API_KEY not found in environment. API calls may fail.")
         client = LLMClient(api_key=api_key)
-    
+
     facade = LLMFacade(
         prompt_manager=PromptManager(),
         client=client,
@@ -66,7 +78,7 @@ def main():
 
     # 3. 履歴管理とループの実行
     history = HistoryManager()
-    
+
     loop = EvolutionLoop(
         llm_facade=facade,
         julia_runner=runner,
@@ -74,7 +86,7 @@ def main():
         max_generations=args.max_gen,
         target_rmse=args.target_rmse,
         dataset_path=args.dataset,
-        target_variable=args.target
+        target_variable=target_normalized
     )
 
     try:

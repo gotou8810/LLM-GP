@@ -3,6 +3,7 @@
 import subprocess
 import json
 import os
+import shutil
 from typing import Dict, Any
 
 class SubprocessWrapper:
@@ -12,6 +13,12 @@ class SubprocessWrapper:
     def __init__(self, project_path: str = ".", script_path: str = "src/NumericalEvaluator/cli.jl"):
         self.project_path = project_path
         self.script_path = script_path
+        
+        # Determine Julia executable path
+        self.julia_exe = "julia"
+        if not shutil.which("julia"):
+            if os.path.exists("/opt/bin/julia"):
+                self.julia_exe = "/opt/bin/julia"
 
     def init_data(self, dataset_path: str):
         """
@@ -22,11 +29,11 @@ class SubprocessWrapper:
         
         # Juliaが実行可能か、プロジェクトがロードできるか軽くチェック
         try:
-            subprocess.run(["julia", "--version"], check=True, capture_output=True)
+            subprocess.run([self.julia_exe, "--version"], check=True, capture_output=True)
         except Exception as e:
             raise RuntimeError(f"Julia is not installed or not in PATH: {e}")
 
-    def evaluate_formula(self, formula: str, target_variable: str, dataset_path: str, max_steps: int = 5000, search_range: list = [-10.0, 10.0], timeout: int = 180) -> Dict[str, Any]:
+    def evaluate_formula(self, formula: str, target_variable: str, dataset_path: str, max_steps: int = 1000, search_range: list = [-10.0, 10.0], timeout: int = 180) -> Dict[str, Any]:
         """
         指定された数式をJuliaエンジンで評価する
         """
@@ -47,7 +54,7 @@ class SubprocessWrapper:
         evaluator_path = os.path.join(os.path.dirname(full_script_path), "NumericalEvaluator.jl")
         
         cmd = [
-            "julia",
+            self.julia_exe,
             f"--project={self.project_path}",
             "-e",
             f"include(\"{evaluator_path}\"); NumericalEvaluator.main()"

@@ -1,0 +1,91 @@
+2026-06-11 15:36:00,318 [INFO] BatchRunner: ============================================================
+2026-06-11 15:36:00,318 [INFO] BatchRunner: Initializing TEP LLM-GP Batch Run - WAVE 1
+2026-06-11 15:36:00,318 [INFO] BatchRunner: Target Variables in Wave 1: ['XMEAS(15)', 'XMEAS(16)', 'XMEAS(18)']
+2026-06-11 15:36:00,319 [INFO] BatchRunner: Max Generations per target: 20
+2026-06-11 15:36:00,319 [INFO] BatchRunner: Cooldown delay: 30 seconds
+2026-06-11 15:36:00,319 [INFO] BatchRunner: ============================================================
+2026-06-11 15:36:00,319 [INFO] BatchRunner: Starting symbolic regression for target: XMEAS(15)
+2026-06-11 15:36:00,319 [INFO] BatchRunner: Command: /usr/bin/python3 src/orchestrator/main.py --target XMEAS(15) --max-gen 20 --target-rmse 0.01 --dataset TEP_FaultFree_Training.RData
+2026-06-11 15:36:00,414 [ERROR] BatchRunner: Evolution loop failed for target XMEAS(15) with exit code 1
+2026-06-11 15:36:00,414 [INFO] BatchRunner: Sleeping for 30 seconds to prevent API rate limiting...
+2026-06-11 15:36:30,445 [INFO] BatchRunner: Starting symbolic regression for target: XMEAS(16)
+2026-06-11 15:36:30,445 [INFO] BatchRunner: Command: /usr/bin/python3 src/orchestrator/main.py --target XMEAS(16) --max-gen 20 --target-rmse 0.01 --dataset TEP_FaultFree_Training.RData
+2026-06-11 15:36:30,529 [ERROR] BatchRunner: Evolution loop failed for target XMEAS(16) with exit code 1
+2026-06-11 15:36:30,529 [INFO] BatchRunner: Sleeping for 30 seconds to prevent API rate limiting...
+2026-06-11 15:37:00,559 [INFO] BatchRunner: Starting symbolic regression for target: XMEAS(18)
+2026-06-11 15:37:00,560 [INFO] BatchRunner: Command: /usr/bin/python3 src/orchestrator/main.py --target XMEAS(18) --max-gen 20 --target-rmse 0.01 --dataset TEP_FaultFree_Training.RData
+2026-06-11 15:37:00,647 [ERROR] BatchRunner: Evolution loop failed for target XMEAS(18) with exit code 1
+2026-06-11 15:37:00,647 [INFO] BatchRunner: ============================================================
+2026-06-11 15:37:00,647 [INFO] BatchRunner: Batch execution completed for Wave 1!
+2026-06-11 15:37:00,647 [INFO] BatchRunner:   - XMEAS(15): FAILED
+2026-06-11 15:37:00,647 [INFO] BatchRunner:   - XMEAS(16): FAILED
+2026-06-11 15:37:00,647 [INFO] BatchRunner:   - XMEAS(18): FAILED
+2026-06-11 15:37:00,648 [INFO] BatchRunner: ============================================================
+2026-06-11 15:39:38,069 [INFO] BatchRunner: ============================================================
+2026-06-11 15:39:38,069 [INFO] BatchRunner: Initializing TEP LLM-GP Batch Run - WAVE 1
+2026-06-11 15:39:38,069 [INFO] BatchRunner: Target Variables in Wave 1: ['XMEAS(15)', 'XMEAS(16)', 'XMEAS(18)']
+2026-06-11 15:39:38,069 [INFO] BatchRunner: Max Generations per target: 20
+2026-06-11 15:39:38,069 [INFO] BatchRunner: Cooldown delay: 30 seconds
+2026-06-11 15:39:38,069 [INFO] BatchRunner: ============================================================
+2026-06-11 15:39:38,069 [INFO] BatchRunner: Starting symbolic regression for target: XMEAS(15)
+2026-06-11 15:39:38,069 [INFO] BatchRunner: Command: /usr/bin/python3 src/orchestrator/main.py --target XMEAS(15) --max-gen 20 --target-rmse 0.01 --dataset TEP_FaultFree_Training.RData
+2026-06-11 15:39:38,181 [ERROR] BatchRunner: Evolution loop failed for target XMEAS(15) with exit code 1
+2026-06-11 15:39:38,181 [INFO] BatchRunner: Sleeping for 30 seconds to prevent API rate limiting...
+2026-06-11 15:40:08,210 [INFO] BatchRunner: Starting symbolic regression for target: XMEAS(16)
+2026-06-11 15:40:08,210 [INFO] BatchRunner: Command: /usr/bin/python3 src/orchestrator/main.py --target XMEAS(16) --max-gen 20 --target-rmse 0.01 --dataset TEP_FaultFree_Training.RData
+2026-06-11 15:40:08,323 [ERROR] BatchRunner: Evolution loop failed for target XMEAS(16) with exit code 1
+2026-06-11 15:40:08,323 [INFO] BatchRunner: Sleeping for 30 seconds to prevent API rate limiting...
+2026-06-11 15:40:53,415 [INFO] BatchRunner: ============================================================
+2026-06-11 15:40:53,415 [INFO] BatchRunner: Initializing TEP LLM-GP Batch Run - WAVE 1
+2026-06-11 15:40:53,415 [INFO] BatchRunner: Target Variables in Wave 1: ['XMEAS(15)', 'XMEAS(16)', 'XMEAS(18)']
+2026-06-11 15:40:53,416 [INFO] BatchRunner: Max Generations per target: 20
+2026-06-11 15:40:53,416 [INFO] BatchRunner: Cooldown delay: 30 seconds
+2026-06-11 15:40:53,416 [INFO] BatchRunner: ============================================================
+2026-06-11 15:40:53,416 [INFO] BatchRunner: Starting symbolic regression for target: XMEAS(15)
+2026-06-11 15:40:53,416 [INFO] BatchRunner: Command: /usr/bin/python3 src/orchestrator/main.py --target XMEAS(15) --max-gen 20 --target-rmse 0.01 --dataset TEP_FaultFree_Training.RData
+2026-06-11 15:40:54,055 [ERROR] BatchRunner: Evolution loop failed for target XMEAS(15) with exit code 1
+2026-06-11 15:40:54,055 [INFO] BatchRunner: Sleeping for 30 seconds to prevent API rate limiting...
+2026-06-11 15:41:24,085 [INFO] BatchRunner: Starting symbolic regression for target: XMEAS(16)
+2026-06-11 15:41:24,085 [INFO] BatchRunner: Command: /usr/bin/python3 src/orchestrator/main.py --target XMEAS(16) --max-gen 20 --target-rmse 0.01 --dataset TEP_FaultFree_Training.RData
+2026-06-11 15:41:24,680 [ERROR] BatchRunner: Evolution loop failed for target XMEAS(16) with exit code 1
+2026-06-11 15:41:24,680 [INFO] BatchRunner: Sleeping for 30 seconds to prevent API rate limiting...
+2026-06-11 15:41:56,816 [INFO] BatchRunner: ============================================================
+2026-06-11 15:41:56,816 [INFO] BatchRunner: Initializing TEP LLM-GP Batch Run - WAVE 1
+2026-06-11 15:41:56,816 [INFO] BatchRunner: Target Variables in Wave 1: ['XMEAS(15)', 'XMEAS(16)', 'XMEAS(18)']
+2026-06-11 15:41:56,816 [INFO] BatchRunner: Max Generations per target: 20
+2026-06-11 15:41:56,816 [INFO] BatchRunner: Cooldown delay: 30 seconds
+2026-06-11 15:41:56,817 [INFO] BatchRunner: ============================================================
+2026-06-11 15:41:56,817 [INFO] BatchRunner: Starting symbolic regression for target: XMEAS(15)
+2026-06-11 15:41:56,817 [INFO] BatchRunner: Command: /usr/bin/python3 src/orchestrator/main.py --target XMEAS(15) --max-gen 20 --target-rmse 0.01 --dataset TEP_FaultFree_Training.RData
+2026-06-11 15:47:40,011 [INFO] BatchRunner: ============================================================
+2026-06-11 15:47:40,011 [INFO] BatchRunner: Initializing TEP LLM-GP Batch Run - WAVE 1
+2026-06-11 15:47:40,011 [INFO] BatchRunner: Target Variables in Wave 1: ['XMEAS(15)', 'XMEAS(16)', 'XMEAS(18)']
+2026-06-11 15:47:40,011 [INFO] BatchRunner: Max Generations per target: 20
+2026-06-11 15:47:40,011 [INFO] BatchRunner: Cooldown delay: 30 seconds
+2026-06-11 15:47:40,011 [INFO] BatchRunner: ============================================================
+2026-06-11 15:47:40,012 [INFO] BatchRunner: Starting symbolic regression for target: XMEAS(15)
+2026-06-11 15:47:40,012 [INFO] BatchRunner: Command: /usr/bin/python3 src/orchestrator/main.py --target XMEAS(15) --max-gen 20 --target-rmse 0.01 --dataset TEP_FaultFree_Training.RData
+2026-06-11 15:53:57,468 [INFO] BatchRunner: ============================================================
+2026-06-11 15:53:57,468 [INFO] BatchRunner: Initializing TEP LLM-GP Batch Run - WAVE 1
+2026-06-11 15:53:57,468 [INFO] BatchRunner: Target Variables in Wave 1: ['XMEAS(15)', 'XMEAS(16)', 'XMEAS(18)']
+2026-06-11 15:53:57,468 [INFO] BatchRunner: Max Generations per target: 20
+2026-06-11 15:53:57,468 [INFO] BatchRunner: Cooldown delay: 30 seconds
+2026-06-11 15:53:57,468 [INFO] BatchRunner: ============================================================
+2026-06-11 15:53:57,468 [INFO] BatchRunner: Starting symbolic regression for target: XMEAS(15)
+2026-06-11 15:53:57,468 [INFO] BatchRunner: Command: /usr/bin/python3 src/orchestrator/main.py --target XMEAS(15) --max-gen 20 --target-rmse 0.01 --dataset TEP_FaultFree_Training.RData
+2026-06-11 16:22:34,137 [INFO] BatchRunner: Successfully completed evolution loop for target: XMEAS(15)
+2026-06-11 16:22:34,137 [INFO] BatchRunner: Sleeping for 30 seconds to prevent API rate limiting...
+2026-06-11 16:23:04,138 [INFO] BatchRunner: Starting symbolic regression for target: XMEAS(16)
+2026-06-11 16:23:04,139 [INFO] BatchRunner: Command: /usr/bin/python3 src/orchestrator/main.py --target XMEAS(16) --max-gen 20 --target-rmse 0.01 --dataset TEP_FaultFree_Training.RData
+2026-06-11 16:50:31,161 [INFO] BatchRunner: Successfully completed evolution loop for target: XMEAS(16)
+2026-06-11 16:50:31,161 [INFO] BatchRunner: Sleeping for 30 seconds to prevent API rate limiting...
+2026-06-11 16:51:01,191 [INFO] BatchRunner: Starting symbolic regression for target: XMEAS(18)
+2026-06-11 16:51:01,192 [INFO] BatchRunner: Command: /usr/bin/python3 src/orchestrator/main.py --target XMEAS(18) --max-gen 20 --target-rmse 0.01 --dataset TEP_FaultFree_Training.RData
+2026-06-11 17:15:00,537 [INFO] BatchRunner: ============================================================
+2026-06-11 17:15:00,537 [INFO] BatchRunner: Initializing TEP LLM-GP Batch Run - WAVE 1
+2026-06-11 17:15:00,538 [INFO] BatchRunner: Target Variables in Wave 1: ['XMEAS(15)', 'XMEAS(16)', 'XMEAS(18)']
+2026-06-11 17:15:00,538 [INFO] BatchRunner: Max Generations per target: 20
+2026-06-11 17:15:00,538 [INFO] BatchRunner: Cooldown delay: 30 seconds
+2026-06-11 17:15:00,538 [INFO] BatchRunner: ============================================================
+2026-06-11 17:15:00,538 [INFO] BatchRunner: Starting symbolic regression for target: XMEAS(15)
+2026-06-11 17:15:00,538 [INFO] BatchRunner: Command: /usr/bin/python3 src/orchestrator/main.py --target XMEAS(15) --max-gen 20 --target-rmse 0.01 --dataset TEP_FaultFree_Training.RData

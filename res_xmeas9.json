@@ -1,0 +1,1 @@
+{"formula":"-c[1]*xmv_10 + c[2]*xmeas_6_lag20 + c[3]*xmeas_7_lag5 + c[4]*xmeas_6","r2":0.4116896470194089,"status":"success","target":"xmeas_9"}
