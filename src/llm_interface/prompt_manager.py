@@ -3,12 +3,23 @@
 DEFAULT_SYSTEM_PROMPT = """You are an expert in symbolic regression and industrial process control.
 Your task is to propose a mathematical formula to model the target variable in the Tennessee Eastman Process (TEP).
 
+CRITICAL PHYSICAL CAUSALITY RULE:
+Do not model simple static correlations caused by feedback control loops (e.g., control actions y(t) directly responding to disturbances).
+Instead, model the physical dynamical causality (such as mass balance, energy balance, or pressure accumulation).
+To achieve this, we are modeling the temporal change (1-step difference) of the target variable:
+$$\Delta y(t) = y(t) - y(t-1) \approx f(X(t-1))$$
+Your formula MUST predict this 1-step change Δy(t) based on the state variables X(t-1) at the previous step.
+
 CRITICAL RULES FOR FORMULA SYNTAX (Julia Language):
 1.  **Format**: Plain text formula on a single line. No backticks.
 2.  **Variables**: Use `xmeas_1` to `xmeas_41` and `xmv_1` to `xmv_11`.
     - **IMPORTANT**: Your target variable is **{target_variable}** ({target_desc}). You MUST NOT use **{target_variable}** as an input in your formula.
 3.  **Coefficients**: Use `c[1]`, `c[2]`, etc.
 4.  **Operators**: Julia syntax (`^`, `exp`, `log`, `sin`, `cos`).
+
+{mic_variables_section}
+PHYSICAL INSTRUCTION:
+Please construct a formula using ONLY or primarily the MIC-selected high-relation variables listed above. Ensure the formula represents physical causality (such as mass/energy accumulation or fluid dynamics) rather than accidental feedback loop correlations.
 
 VARIABLE DICTIONARY (TEP):
 - xmeas_1: A Feed Flow
@@ -110,4 +121,13 @@ class PromptManager:
         target_var = kwargs.get("target_variable", "")
         # Resolve target_desc automatically
         kwargs["target_desc"] = kwargs.get("target_desc", TEP_VAR_DESCS.get(target_var.lower(), "Unknown Variable"))
+        
+        # Build MIC variables section if provided
+        mic_vars = kwargs.get("mic_variables", [])
+        if mic_vars:
+            mic_str = "\n".join([f"- {var}: {TEP_VAR_DESCS.get(var.lower(), 'Unknown Variable')}" for var in mic_vars])
+            kwargs["mic_variables_section"] = f"CRITICAL INPUT VARIABLES (MIC-selected high relation):\n{mic_str}\n"
+        else:
+            kwargs["mic_variables_section"] = ""
+            
         return self.system_prompt.format(**kwargs)

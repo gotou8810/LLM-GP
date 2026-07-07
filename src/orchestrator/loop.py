@@ -19,7 +19,9 @@ class EvolutionLoop:
         max_generations: int,
         target_rmse: float,
         dataset_path: str,
-        target_variable: str
+        target_variable: str,
+        mic_variables: list = None,
+        predict_diff: bool = True
     ):
         self.llm = llm_facade
         self.runner = julia_runner
@@ -28,6 +30,8 @@ class EvolutionLoop:
         self.target_rmse = target_rmse
         self.dataset_path = dataset_path
         self.target_variable = target_variable
+        self.mic_variables = mic_variables or []
+        self.predict_diff = predict_diff
 
     def run(self):
         logger.info("Starting Evolutionary Loop...")
@@ -43,7 +47,8 @@ class EvolutionLoop:
                     history=context["history"], 
                     best_formula=context["best_formula"], 
                     best_fitness=context["best_fitness"],
-                    target_variable=self.target_variable
+                    target_variable=self.target_variable,
+                    mic_variables=self.mic_variables
                 )
                 logger.info(f"Proposed Formula: {candidate.formula}")
                 logger.info(f"LLM Feedback: {candidate.feedback}")
@@ -55,7 +60,8 @@ class EvolutionLoop:
             eval_result = self.runner.evaluate_formula(
                 formula=candidate.formula,
                 target_variable=self.target_variable,
-                dataset_path=self.dataset_path
+                dataset_path=self.dataset_path,
+                predict_diff=self.predict_diff
             )
             
             if eval_result.get("status") == "error":

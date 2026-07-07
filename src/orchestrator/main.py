@@ -30,6 +30,9 @@ def main():
     parser.add_argument("--target-rmse", type=float, default=0.01, help="Stop if RMSE reaches this value")
     parser.add_argument("--dataset", type=str, default="TEP_FaultFree_Training.RData", help="Path to the TEP dataset")
     parser.add_argument("--interactive", action="store_true", help="Use manual input instead of LLM API")
+    parser.add_argument("--no-diff", action="store_false", dest="predict_diff", help="Predict absolute values instead of 1-step change")
+    parser.add_argument("--n-mic", type=int, default=10, help="Number of variables to select with MIC")
+    parser.set_defaults(predict_diff=True)
     
     args = parser.parse_args()
 
@@ -76,6 +79,33 @@ def main():
         parser=ResponseParser()
     )
 
+    # MICスクリーニング処理と目的変数差分化の事前計算
+    mic_vars = []
+    if args.predict_diff:
+        logger.info("Computing MIC scores for screening...")
+        try:
+            import pyreadr
+            import pandas as pd
+            from src.orchestrator.preprocessing import calculate_mic_scores
+            
+            result = pyreadr.read_rdata(args.dataset)
+            df = None
+            for key in result.keys():
+                if isinstance(result[key], pd.DataFrame):
+                    df = result[key]
+                    break
+                    
+            if df is not None:
+                # Julia側と一致するよう小文字に変換
+                df.columns = [col.lower() for col in df.columns]
+                mic_vars = calculate_mic_scores(df, target_normalized, n_select=args.n_mic)
+            else:
+                logger.warning("No DataFrame found in RData for MIC screening.")
+        except ImportError:
+            logger.warning("pyreadr/pandas are not installed. Skipping Python-side MIC screening. (Please install pyreadr, pandas, scikit-learn to enable)")
+        except Exception as e:
+            logger.warning(f"Failed to calculate MIC scores: {e}. Skipping MIC screening.")
+
     # 3. 履歴管理とループの実行
     history = HistoryManager()
 
@@ -86,7 +116,9 @@ def main():
         max_generations=args.max_gen,
         target_rmse=args.target_rmse,
         dataset_path=args.dataset,
-        target_variable=target_normalized
+        target_variable=target_normalized,
+        mic_variables=mic_vars,
+        predict_diff=args.predict_diff
     )
 
     try:

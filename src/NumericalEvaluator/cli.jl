@@ -61,6 +61,18 @@ function main(in_io::IO=stdin, out_io::IO=stdout)
         end
         target_y = Vector{Float64}(df_norm[:, target_var])
 
+        # 差分予測モードの判定（デフォルト: true）
+        predict_diff = get(hparams, "predict_diff", true)
+        if predict_diff
+            # ターゲット変数の時間差分 Δy(t) = y(t) - y(t-1)
+            target_diff = target_y[2:end] .- target_y[1:end-1]
+            
+            # 説明変数として1ステップ前の状態 X(t-1) を用いる
+            df_norm = df_norm[1:end-1, :]
+            target_y = target_diff
+            println(stderr, "Applying 1-step difference pre-processing (Euler discrete-time derivative: Δy(t) ≈ f(X(t-1))). Evaluation length: $(length(target_y))")
+        end
+
         # 3. 数式のパース
         var_names = numeric_cols
         eval_func, num_coeffs, formula_expr = parse_formula_full(formula_str, var_names)

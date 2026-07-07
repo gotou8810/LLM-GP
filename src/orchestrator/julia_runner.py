@@ -33,7 +33,7 @@ class SubprocessWrapper:
         except Exception as e:
             raise RuntimeError(f"Julia is not installed or not in PATH: {e}")
 
-    def evaluate_formula(self, formula: str, target_variable: str, dataset_path: str, max_steps: int = 1000, search_range: list = [-10.0, 10.0], timeout: int = 180) -> Dict[str, Any]:
+    def evaluate_formula(self, formula: str, target_variable: str, dataset_path: str, max_steps: int = 1000, search_range: list = [-10.0, 10.0], predict_diff: bool = True, timeout: int = 180) -> Dict[str, Any]:
         """
         指定された数式をJuliaエンジンで評価する
         """
@@ -43,7 +43,8 @@ class SubprocessWrapper:
             "dataset_path": dataset_path,
             "hyperparameters": {
                 "max_steps": max_steps,
-                "search_range": search_range
+                "search_range": search_range,
+                "predict_diff": predict_diff
             }
         }
         
