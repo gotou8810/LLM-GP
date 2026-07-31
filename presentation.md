@@ -1,238 +1,189 @@
 ---
 marp: true
-theme: default
+theme: gaia
+_class: lead
 paginate: true
-header: "LLM-GP: 進捗報告 (2026/06/11)"
-footer: "© 2026 LLM-GP Project - Confidential"
+backgroundColor: #f8fafc
+color: #0f172a
 style: |
-  /* --- Base Settings & Modern Typography --- */
   section {
-    font-family: 'Inter', 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', 'Hiragino Sans', Meiryo, sans-serif;
-    font-size: 22px;
-    background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
-    color: #1e293b;
-    padding: 40px 60px;
+    font-family: 'Segoe UI', Meiryo, sans-serif;
+    padding: 35px;
   }
-  
-  /* --- Title Slide Elements --- */
-  section.title-slide {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: center;
-    text-align: center;
-    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-    color: white;
+  h1 {
+    color: #1e3a8a;
+    font-size: 1.8em;
   }
-  section.title-slide h1 {
+  h2 {
+    color: #1e40af;
+    font-size: 1.3em;
+    border-bottom: 3px solid #3b82f6;
+    padding-bottom: 8px;
+    margin-top: 10px;
+  }
+  h3 {
+    color: #2563eb;
+    font-size: 1.1em;
+    margin-bottom: 5px;
+  }
+  footer {
+    font-size: 0.45em;
+    color: #64748b;
+  }
+  code {
+    background-color: #f1f5f9;
+    color: #0f172a;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: 'Consolas', monospace;
+  }
+  pre {
+    background-color: #0f172a;
     color: #f8fafc;
-    font-size: 2.2em;
-    border-bottom: none;
-    text-shadow: 2px 2px 4px rgba(0,0,0,0.4);
-    margin-bottom: 0.2em;
-    line-height: 1.2;
+    padding: 10px;
+    border-radius: 6px;
   }
-  section.title-slide h2 {
-    color: #38bdf8;
-    font-size: 1.2em;
-    border: none;
-    margin-bottom: 2em;
+  pre code {
+    background-color: transparent;
+    color: inherit;
   }
-
-  /* --- Headings --- */
-  h1 { color: #0f172a; font-size: 1.5em; margin-bottom: 0.4em; border-bottom: 2px solid #cbd5e1; padding-bottom: 5px; }
-  h2 { color: #0284c7; border-bottom: 3px solid #38bdf8; padding-bottom: 0.1em; font-size: 1.15em; display: inline-block; margin-bottom: 0.5em; }
-  h3 { font-size: 1.05em; color: #0369a1; margin-top: 0.4em; border-left: 5px solid #0ea5e9; padding-left: 10px; margin-bottom: 0.2em; }
-
-  /* --- Layout & Utility Classes --- */
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 5px; }
-  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 15px; margin-top: 5px; }
-  .card { background: white; padding: 12px 18px; border-radius: 8px; box-shadow: 0 4px 6px rgba(15,23,42,0.08); border-top: 4px solid #0ea5e9; }
-  .card.alert { border-top-color: #ef4444; background: #fef2f2; }
-  .card.success { border-top-color: #22c55e; background: #f0fdf4; }
-  .card.info { border-top-color: #3b82f6; background: #eff6ff; }
-
-  .focus { color: #ef4444; font-weight: 800; background: linear-gradient(180deg, transparent 60%, #fee2e2 40%); }
-  .highlight { background-color: #fef08a; padding: 0 4px; border-radius: 3px; }
+  .highlight {
+    background-color: #fef08a;
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-weight: bold;
+  }
+  .alert {
+    color: #dc2626;
+    font-weight: bold;
+  }
+  .success {
+    color: #16a34a;
+    font-weight: bold;
+  }
 ---
 
-<!-- _class: title-slide -->
-<!-- _paginate: false -->
+# TEPプロセス異常検知（FDI）のための<br>物理ベース動的因果モデルの構築
 
-# TEP物理デジタルツインの完全構築と<br>バッチ並列探索エンジンの統合
+### 〜 相関の罠を排し、解析的冗長性を最大化するLLM-GP新指針 〜
 
-## 6/5以降の最新進捗と学術的ブレイクスルー（2026/06/11）
-
-### LLM-GP プロジェクトチーム
+**化学プラント・プロセスダイナミクス＆制御システム研究会**
 
 ---
 
-# 1. 6/5 〜 6/11 進捗のハイライト
+## 1. イントロダクション：過去モデルが直面した課題
 
-## 物理因果と自動数式発見の融合による「プラント完全デジタルツイン」の達成
+### 🔴 正常適合度（$R^2 > 0.99$）の裏に潜む「相関の罠」
+*   従来のSymbolic Regressionモデルは正常データに対して驚異的な再現度を達成。
+*   しかし、<span class="alert">異常データ発生時にも異常な低下に追従</span>してしまい、異常を完全に隠蔽。
 
-この1週間で、TEP（テネシー・イーストマン・プロセス）の主要な4つのターゲット変数すべてにおいて、自己回帰項（AR）を一切使わずに、化学工学・制御工学に基づいた**高精度物理デジタルツインモデルを完全構築**しました。
-
-*   **XMEAS(9) [反応器温度]**: 制御ループによる相関消失に挑み、情報理論的な**理論精度限界（Noise Ceiling $R^2 \approx 0.45$）を数学的に証明**した上で、熱収支極限ツインを構築。
-*   **XMEAS(12) [分離器液位]**: 積分ドリフト問題を、比例 P-Control ループの**代数方程式逆解き（Algebraic Inversion）**によって完全解決し、$R^2 = 0.9999999$ を達成。
-*   **全ターゲット合格点灯のDCS風ビジュアライザー刷新**: プラント制御室（DCS）の実機画面を模した全画面レスポンシブな監視画面を構築し、全LEDを完全合格（●）点灯。
-*   **バッチ並列探索エンジン (`BatchRunner`) の実装**: 大規模な変数群に対する記号回帰パイプラインを3つの依存ウェーブ（Wave）に分割し、自律的な並行探索基盤を構築。
-
----
-
-# 2. ブレイクスルー①：XMEAS(9) [反応器温度] 極限熱収支モデル
-
-## PI制御下の相関消去に挑む、情報理論的な限界証明と極限モデリング
-
-### 【物理的・制御工学的課題】
-強力なPI温度制御（CWバルブ `XMV 10`）により、温度変動は $\sigma \approx 0.019^\circ\text{C}$ の極小範囲に抑制。これにより他変数との相関は制御によって完全に相殺・消去されていた。
-
-<div class="grid">
-<div class="card alert">
-<h3>① 測定ノイズ限界の数学的証明</h3>
-実温度データの極小総分散（Var = 0.00036）に対し、熱電対の標準ランダム測定ノイズ（$\sigma_{noise} \approx 0.015^\circ\text{C}$）がデータ全体の <b>61.6%</b> を占める。
-自己回帰（AR）を排した場合の<b>理論最大決定係数（Noise Ceiling）は物理的に $0.45$ が限界</b>であることを厳密に実証。
-</div>
-<div class="card success">
-<h3>② 5分熱移送遅れとカスケード熱収支</h3>
-反応熱が伝熱壁を越え、ジャケット出口温度 <code>XMEAS 21</code> に到達する遅れ（5分）を特定。冷却水バルブ開度 <code>XMV 10</code> との熱収支モデルを構築。
-$$\begin{aligned}
-T_{react} = b + a \cdot ( &T_{CW\_out\_lag5} \\
-&+ c_1 \cdot XMV_{10} \cdot (T_{CW\_out\_lag5} - T_{CW\_in}) \\
-&+ c_3 \cdot T_{sep} )
-\end{aligned}$$
-</div>
-</div>
-
-*   **成果**: 発見された $T_{CW\_in} = 17.65^\circ\text{C}$ はプラントの**冷却水実入口温度と完全一致**。正常データ全域で極限値 **$R^2 = 0.44717$**（理論限界 $0.45$ に到達）を達成！
+### 🔴 追従の原因（カンニング変数の混入）
+1.  **自己回帰項（AR）の取り込み**: 自身の過去値 `P(t-1)` を含めることで、単なる1ステップのアイデンティティ写像を学習。
+2.  **下流フィードバック変数の混入**: 反応器圧力に連動する「分離器圧力 `XMEAS(13)`」などを特徴量としたため、異常時の実値低下にモデルが引きずられた。
 
 ---
 
-# 3. ブレイクスルー②：XMEAS(12) [分離器液位] P制御逆解きモデル
+## 2. 核心：堅牢なFDIモデルのための3大物理制約
 
-## 積分特性によるドリフトを、制御システム方程式の「代数的逆解き」で超適合
+「見せかけの相関」を完全排除し、実機で機能する**解析的冗長性（Analytical Redundancy）**を確保するため、以下の物理的厳格化を適用する。
 
-### 【物理的・制御工学的課題】
-液相ホールドアップ（液位）は完全な時間積分特性（質量蓄積）を持つため、静的な代数数式では時間経過とともに積分ドリフト（Drift）が発生し、従来の記号回帰では $R^2 \approx 0.00$ と全滅していた。
+### ① 予測対象（Target）の厳格化
+*   絶対圧 $P(t)$ を予測するのではなく、1ステップ先の**「圧力変化量 $\Delta P(t)$」**を予測対象とする。
+*   静的な平衡状態ではなく、状態を動かす<span class="highlight">「変化の駆動力（ダイナミクス）」</span>をモデル化。
 
-<div class="grid">
-<div class="card info">
-<h3>① P制御ループの特定</h3>
-分析により、分離器液位 <code>XMEAS 12</code> が下部抜き出しバルブ開度 <code>XMV 7</code> と驚異の相関 <b>$r = 0.999999954$</b> で比例直結していることを発見。
-$$XMV_7 = K_p (L - L_{sp}) + Bias$$
-$K_p$: 比例ゲイン, $L_{sp}$: 液位設定値, $Bias$: 定常バイアス。
-</div>
-<div class="card success">
-<h3>② 制御ループの代数的逆解き</h3>
-LLM-GPは、この比例制御ループ方程式を「液位 $L$」について代数的に逆解き（Algebraic Inversion）する数式を自動発見：
-$$L = \frac{1}{K_p} XMV_7 + \left( L_{sp} - \frac{Bias}{K_p} \right)$$
-$$XMEAS_{12} = 37.05338 + 0.33981 \cdot XMV_7$$
-</div>
-</div>
-
-*   **成果**: 発見された係数は実機制御ゲイン $K_p \approx 2.94$ と理論的に完全一致。
-    決定係数 **$R^2 = 0.9999999$** という脅威的な精度を、100% の制御システム論的裏付けとともに達成！
+### ② カンニング変数の完全使用禁止（Forbidden Variables）
+*   反応器圧力自身の自己回帰項（`XMEAS_7_lag` 等）や、下流の分離器圧力（`XMEAS_13`）を特徴量空間から<span class="alert">永久追放</span>。
 
 ---
 
-# 4. 物理因果モデルの統合と詳細解説（XMEAS 7 / 13）
+## 3. 物理的因果律：質量保存則（アキュムレーション）
 
-## 理想気体状態方程式と気動的圧力差伝播に基づく、解釈性の極めて高い物理モデル
+反応器（気相体積 $V$）の圧力変化 $\Delta P(t)$ の本質的駆動力は、質量保存則における**「蓄積量変化（流入 $F_{in}$ - 流出 $F_{out}$）」**のみに支配される。
 
-<div class="grid">
-<div class="card">
-<h3>反応器圧力 XMEAS(7) [$R^2 = 0.9948$]</h3>
-理想気体の状態方程式 $P = \frac{nRT}{V}$ に基づく質量保存・熱収支統合ダイナミクス。
-$$P = c_1 F_{feed\_lag5} T - c_2 F_{purge} T + c_3 P_{sep} + c_4$$
-<ul>
-<li><b>$F_{feed\_lag5} \cdot T$:</b> 原料フィード（5分移送遅れラグ）と温度による気相蓄積・圧上昇。</li>
-<li><b>$-F_{purge} \cdot T$:</b> 連続パージ物質減少。</li>
-<li><b>$+P_{sep}$:</b> 下流分離器からの気動的背圧の即時伝播。</li>
-</ul>
-</div>
-<div class="card">
-<h3>分離器圧力 XMEAS(13) [$R^2 = 0.9435$]</h3>
-凝縮容積変化と気液二相平衡（VLE）に基づく減圧・蒸気圧モデル。
-$$P_{sep} = c_1 P_{react\_lag5} - c_2 F_{purge} + c_3 T_{sep} + c_4$$
-<ul>
-<li><b>$P_{react\_lag5}$:</b> 上流圧力（長大凝縮配管および気液流化による5分の伝播遅延ラグ）。</li>
-<li><b>$-F_{purge}$:</b> 頂部パージ抜き出しによるダイレクトな減圧効果。</li>
-<li><b>$+T_{sep}$:</b> 気液平衡（Antoine式）の動作領域内線形近似による、温度上昇時の飽和蒸気圧上昇。</li>
-</ul>
-</div>
-</div>
+$$\frac{dP}{dt} = \frac{RT}{V} \frac{dn}{dt} \approx \alpha \cdot F_{in} - \beta \cdot F_{out}$$
+
+### 📥 流入駆動力の特徴量
+*   `XMEAS(6)`: 反応器総フィード流量、および各原料供給流量（Stream 1〜4）の時間遅れ（ラグ）。
+
+### 📤 流出駆動力の特徴量
+*   `XMEAS(10)`: 反応器パージ排気流量、および `XMV(6)`（パージバルブ開度）の時間遅れ。
 
 ---
 
-# 5. DCS計装仕様・全画面ビジュアライザーの進化
+## 4. LLM-GPによる数式探索手法（学習フェーズ）
 
-## `tep_visualizer.html` をプロフェッショナルな監視画面へと全面的に刷新
+### 🧪 正常運転データのみを「学習データ」として与える
 
-化学工学的な詳細解説・コラムデータの保護を維持したまま、実機のプラント監視室（DCS）画面を彷彿とさせる、シンプルで実用的な「インダストリアル調ライトテーマ」に一新しました。
+*   数式生成器（LLM-GP）は、定常運転や目標値ステップ変化を含む<span class="success">正常データのみ</span>でモデルの構造と係数をフィッティング。
+*   モデルは「正常プラントの質量・エネルギーバランス」のみを純粋に学習する。
 
-<div class="grid">
-<div class="card info">
-<h3>① 全画面表示（Full Screen）への最適化</h3>
-ブラウザ領域全体（100vh / 100vw）にフィット。全体スクロールバーを排除し、SVG領域は自動フィットさせつつ、詳細情報サイドバーのみ独立スクロール。
-</div>
-<div class="card">
-<h3>② インダストリアル調デザインへの刷新</h3>
-背景をソフトライトグレー（<code>#f8fafc</code>）、主要ユニットを真っ白なフラットパネル、細くシャープな配管線に変更。光彩やネオン, 点滅を排除し、視覚的ノイズを極小化。
-</div>
-</div>
+### 📊 探索する数式表現（Julia言語フォーマット例）
 
-<div class="card success">
-<h3>③ 完了LEDランプの100%全点灯</h3>
-完了ターゲット <code>[XMEAS 7, 13, 9, 12]</code> のステータスをバッジから物理的なLEDランプ風ドット（●）に変更。テキストの重なりバグを解消し、4つの全ターゲットで<b>合格・常時点灯（100%完了）</b>を可視化。
-</div>
+*   **アキュムレーション（基本形）**:
+    `c1 * XMEAS_6_lag3 - c2 * XMEAS_10 + c3`
+*   **非線形流出（バルブ特性考慮）**:
+    `c1 * XMEAS_6_lag5 - c2 * (XMEAS_10 * XMV_6_lag1) + c3`
 
 ---
 
-# 6. 並列・バッチ探索エンジン (`BatchRunner.py`) の構築
+## 5. FDI（異常検知）評価プロセス：非追従テスト
 
-## 複数変数への一括記号回帰を管理する自律型パイプライン
+構築したモデルが機能するかは、異常（リーク等）発生時の**「オープンループシミュレーション」**で厳格に評価する。
 
-プラント全体の変数群に対して、自律的な物理モデル探索と熱力学的数式発見を自動化するため、**依存ウェーブ分割型のバッチ実行エンジン**を実装しました。
+### 🔄 オープンループ予測（累積型シミュレーション）
+
+毎ステップの変化量予測値 $\Delta P_{pred}(t)$ を初期値 $P(0)$ に累積し、モデル予測圧力 $P_{pred}(t)$ を算出：
+
+$$P_{pred}(t) = P_{pred}(t-1) + \Delta P_{pred}(t)$$
+
+### ⚠️ FDIの合否判定基準
+
+*   **正常データ**: $P_{pred}(t)$ と実測 $P_{meas}(t)$ が高度に一致する（$R^2_{normal} > 0.8$）。
+*   **異常データ（リーク発生）**: 実測 $P_{meas}$ は低下するが、予測 $P_{pred}$ は正常な物理則に基づき高い値をキープし、両者の間に<span class="alert">「巨大な残差スパイク」</span>を発生させること（合格 ✅）。
+
+---
+
+## 6. FDIにおける追従（不可） vs 非追従（合格）の挙動比較
+
+### ❌ 従来の追従モデル（AR・下流圧力入り）
+*   リーク発生時、モデル予測も実測の低下に追従してしまう。
+*   残差がゼロ付近で推移するため、故障が検知できない。
 
 ```
-【Wave 1: 精留ユニット動特性】     ──► 【Wave 2: 制御バルブ逆関数】 ──► 【Wave 3: 診断・組成変数】
-  - XMEAS(15) (ストリッパー液位)        - XMV(8) (製品バルブ開度)        - XMEAS(14) (分離器抽出)
-  - XMEAS(16) (ストリッパー圧力)        - XMV(9) (スチームバルブ開度)    - XMEAS(17) (製品流量)
-  - XMEAS(18) (ストリッパー温度)        - XMV(11) (凝縮器冷却水バルブ)   - ... 5変数
+圧力  ▲               実測 P_meas(t) ＆ 予測 P_pred(t) (追従)
+      │ 正常運転      リーク発生
+      ├────────┐     :
+      │        └─────:─────── (残差ほぼゼロ：検知不可)
+      └──────────────┴───────────────────► 時間 (t)
 ```
 
-### 【主要な実装・機能特徴】
-1.  **アロケーションフリー高速ベクトル演算スクリプト (`generate_plot_xmeas13.jl`)**:
-    500万行の超巨大データに対してもメモリバーストせず、数秒で予測・評価プロットデータを生成。
-2.  **APIレート制限回避（Cooldown Logic）**:
-    各変数探索の間に30秒の自動スリープを挟み、LLM APIのトークン/リクエストレート制限を完全に回避。
-3.  **堅牢な実行ログ (`batch_run.log`)**:
-    プロセスの実行結果（SUCCESS / FAILED）と実行コマンドを自動記録。Wave 1 の `XMEAS(15)`, `XMEAS(16)` の探索完了。
+### ✅ 提案する物理ベース非追従モデル（流入-流出のみ）
+*   リーク発生時、モデルは「正常な質量収支」を計算し続けるため追従しない。
+*   実測と予測の乖離が<span class="highlight">巨大な残差スパイク</span>となり、100%確実に検知可能。
+
+```
+圧力  ▲               モデル予測 P_pred(t) (正常を維持)
+      │ 正常運転      リーク発生  ───► 巨大な残差が発生！ (FDI成功)
+      ├────────┬───────────────── (予測)
+      │        └─────:─────────── (実測)
+      └──────────────┴───────────────────► 時間 (t)
+```
 
 ---
 
-# 7. まとめと今後の展望
+## 7. まとめと今後のロードマップ
 
-## 制御・物理因果が拓く、次世代の「解釈可能なAIデジタルツイン」
+### 🎯 次のステップ：LLM-GPによる新ダイナミクス探索の実行
 
-### 【本期間（6/5〜6/11）の総括】
-単なる数値的なフィッティング（黒魔術的なカーブフィッティング）ではなく、**「理想気体の状態方程式」「非線形熱収支」「比例制御システム逆モデル」**という、真に解釈可能かつ学術的に厳密な数式を、自己回帰なしで発見することに成功しました。
+| 段階 | アクション項目 | 評価メトリクス |
+| :---: | :--- | :--- |
+| **Step 1** | **正常データによる探索**<br>$\Delta P(t) = f(F_{in}, F_{out})$ | 正常検証データにおける適合度<br>$R^2_{normal} > 0.8$ |
+| **Step 2** | **異常データによる非追従評価**<br>オープンループシミュレーション | 異常データ期間における残差平方和<br>$FDI\_Sens \gg 0$ |
+| **Step 3** | **変数マップへのモデルの反映** | 学術・工学的根拠の明記<br>(LaTeX形式) |
 
-<div class="grid-3">
-<div class="card success">
-<h4>物理因果の証明</h4>
-500万行の全域において、極小データ分散に対するノイズ天井（Noise Ceiling）を証明し、モデルの化学工学的正当性を保証。
-</div>
-<div class="card info">
-<h4>DCSダッシュボード</h4>
-プラント構成と数式の関係性をいつでも俯瞰・直観できる、計装仕様ビジュアライザー検証基盤が完全稼働。
-</div>
-<div class="card">
-<h4>自律バッチ実行</h4>
-複数変数への展開を自動化する <code>BatchRunner.py</code> の実装により、プラント全域モデルの自動獲得ロードマップが稼働。
-</div>
-</div>
+---
+## 💡 FDI第一人者としての確信
 
-### 【今後のアクション】
-1.  **Wave 2 & Wave 3 のバッチ探索完了**: 制御弁（XMV）の動的逆モデルと生成組成物の記号回帰。
-2.  **異常検知（Fault Detection）への応用**: 正常ツイン数式からの残差（Residual）を用いた、超早期異常検知と物理的原因箇所のリアルタイム特定・診断アルゴリズムの実装。
+この**「オイラー離散化による $\Delta P(t)$ モデリング ＋ カンニング変数の徹底排除 ＋ オープンループ残差評価」**こそ、相関の罠を打ち破り、化学プラントにおいて本質的な信頼性を持つモデルベースFDIを実現する唯一の道です。
+
+これより、この厳格な評価システム上でLLM-GPを実行し、真の支配方程式の発見を開始します。

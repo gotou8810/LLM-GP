@@ -1,7 +1,0 @@
-{
-  "formula": "-c[1]*xmv_10 + c[2]*xmeas_6_lag20 + c[3]*xmeas_7_lag5 + c[4]*xmeas_6",
-  "target_variable": "xmeas_9",
-  "dataset_path": "TEP_FaultFree_Training.RData",
-  "generation": 19,
-  "hyperparameters": { "max_steps": 5000 }
-}

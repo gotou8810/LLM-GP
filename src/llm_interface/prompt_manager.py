@@ -14,6 +14,9 @@ CRITICAL RULES FOR FORMULA SYNTAX (Julia Language):
 1.  **Format**: Plain text formula on a single line. No backticks.
 2.  **Variables**: Use `xmeas_1` to `xmeas_41` and `xmv_1` to `xmv_11`.
     - **IMPORTANT**: Your target variable is **{target_variable}** ({target_desc}). You MUST NOT use **{target_variable}** as an input in your formula.
+    - **CRITICAL FOR REACTION PRESSURE (xmeas_7)**: If your target is `xmeas_7` (Reactor Pressure), you MUST NOT use `xmeas_13` (Separator Pressure) under any circumstances. Modeling downstream pressure to predict upstream pressure creates a spurious feedback correlation (The Spurious Correlation Trap).
+    - **CRITICAL FOR SEPARATOR PRESSURE (xmeas_13)**: If your target is `xmeas_13` (Separator Pressure), you MUST NOT use `xmeas_7` (Reactor Pressure) under any circumstances.
+    - To predict Reactor Pressure changes, rely only on mass balance inputs/outputs such as `xmeas_6` (Reactor Feed Rate), `xmeas_10` (Purge Rate), or `xmv_6` (Purge Valve), along with their lags.
 3.  **Coefficients**: Use `c[1]`, `c[2]`, etc.
 4.  **Operators**: Julia syntax (`^`, `exp`, `log`, `sin`, `cos`).
 

@@ -22,14 +22,14 @@ TEP (Tennessee Eastman Process) は、以下の5つの主要ユニットで構�
 | **XMEAS(3)** | E Feed Flow (原料E流量) | Stream 3 (原料E供給ライン) | - |
 | **XMEAS(4)** | A & C Feed Flow (原料A/C/B流量) | Stream 4 (混合原料供給ライン) | - |
 | **XMEAS(5)** | Recycle Flow (リサイクルガス流量) | Stream 8 (Separator気相からCompressor) | - |
-| **XMEAS(6)** | Reactor Feed Rate (反応器総フィード流量) | Stream 6 (全供給・リサイクル合流後) | **因果ラグ変数** (XMEAS 7モデルで使用) |
-| **XMEAS(7)** | Reactor Pressure (反応器圧力) | Reactor 気相部 | ✅ **デジタルツイン完了 ($R^2 = 0.9948$)** |
+| **XMEAS(6)** | Reactor Feed Rate (反応器総フィード流量) | Stream 6 (全供給・リサイクル合流後) | **因果ラグ変数** |
+| **XMEAS(7)** | Reactor Pressure (反応器圧力) | Reactor 気相部 | ✅ **FDI物理モデル完成 ($R^2 = 0.935$ / 誤報 0.00%)** |
 | **XMEAS(8)** | Reactor Level (反応器液位) | Reactor 液相ホールドアップ部 | - |
-| **XMEAS(9)** | Reactor Temperature (反応器温度) | Reactor 内部混合液温度 | ✅ **極限デジタルツイン完了 ($R^2 = 0.4472$)** |
-| **XMEAS(10)**| Purge Rate (パージ排気流量) | Stream 9 (リサイクルループからの系外排気) | **物理相関変数** (XMEAS 13モデル等で使用) |
+| **XMEAS(9)** | Reactor Temperature (反応器温度) | Reactor 内部混合液温度 | 🔍 **物理ベースFDIモデル探索中** |
+| **XMEAS(10)**| Purge Rate (パージ排気流量) | Stream 9 (リサイクルループからの系外排気) | **物理相関変数** |
 | **XMEAS(11)**| Separator Temperature (分離器温度) | Product Separator 内部 | **物理相関変数** |
-| **XMEAS(12)**| Separator Level (分離器液位) | Product Separator 下部液相 | ✅ **完全デジタルツイン完了 ($R^2 = 0.9999$)** |
-| **XMEAS(13)**| Separator Pressure (分離器圧力) | Product Separator 気相部 | ✅ **デジタルツイン完了 ($R^2 = 0.9736$)** |
+| **XMEAS(12)**| Separator Level (分離器液位) | Product Separator 下部液相 | 🔍 **物理ベースFDIモデル探索中** |
+| **XMEAS(13)**| Separator Pressure (分離器圧力) | Product Separator 気相部 | 🔍 **物理ベースFDIモデル探索中** |
 | **XMEAS(14)**| Separator Underflow (分離器底抜き液量) | Stream 10 (SeparatorからStripperへのフィード) | - |
 | **XMEAS(15)**| Stripper Level (ストリッパー液位) | Stripper 塔底液相部 | - |
 | **XMEAS(16)**| Stripper Pressure (ストリッパー圧力) | Stripper 塔頂部 | - |
