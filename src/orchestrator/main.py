@@ -26,7 +26,7 @@ def main():
     
     parser = argparse.ArgumentParser(description="LLM-GP: Symbolic Regression with LLM and Julia")
     parser.add_argument("--target", type=str, default="XMEAS(7)", help="Target variable name in TEP dataset")
-    parser.add_argument("--max-gen", type=int, default=10, help="Maximum number of generations")
+    parser.add_argument("--max-gen", type=int, default=20, help="Maximum number of generations")
     parser.add_argument("--target-rmse", type=float, default=0.01, help="Stop if RMSE reaches this value")
     parser.add_argument("--dataset", type=str, default="TEP_FaultFree_Training.RData", help="Path to the TEP dataset")
     parser.add_argument("--interactive", action="store_true", help="Use manual input instead of LLM API")
@@ -121,6 +121,7 @@ def main():
         predict_diff=args.predict_diff
     )
 
+    history_path = os.path.join("results", f"history_{target_normalized}.json")
     try:
         loop.run()
     except KeyboardInterrupt:
@@ -128,6 +129,10 @@ def main():
     except Exception as e:
         logger.error(f"An error occurred during the evolution loop: {e}")
         raise
+    finally:
+        # 中断・エラー時も含め、その時点までの世代履歴を永続化する
+        history.save_to_json(history_path)
+        logger.info(f"Generation history saved to: {history_path}")
 
     # 4. 結果のサマリ表示
     best = history.get_best_record()

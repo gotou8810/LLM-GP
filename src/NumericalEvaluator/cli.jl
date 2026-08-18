@@ -78,7 +78,8 @@ function main(in_io::IO=stdin, out_io::IO=stdout)
         eval_func, num_coeffs, formula_expr = parse_formula_full(formula_str, var_names)
 
         # 4. 係数の最適化
-        # 目的関数: 予測値と実測値のRMSE + ペナルティ
+        # 目的関数: 予測値と実測値のMAE(外れ値は error_cap で上限) + 複雑さペナルティ
+        # (calculate_fitness, fitness.jl と共通のロジック)
         penalty_weight = 0.001 # 少し弱める
         node_count = count_nodes(formula_expr)
 
@@ -89,27 +90,11 @@ function main(in_io::IO=stdin, out_io::IO=stdout)
         df_sample = df_norm[sample_indices, :]
         target_sample = target_y[sample_indices]
 
-        objective = (c) -> begin
-            errors = Float64[]
-            for i in 1:nrow(df_sample)
-                row = df_sample[i, :]
-                try
-                    pred = eval_func(c, row)
-                    # 予測値を現実的な範囲（正規化データなので-20〜20程度）に収める
-                    if isnan(pred) || isinf(pred)
-                        push!(errors, 20.0)
-                    else
-                        err = abs(pred - target_sample[i])
-                        push!(errors, min(err, 20.0))
-                    end
-                catch e
-                    # Print error details to stderr for debugging
-                    println(stderr, "Evaluation error for formula [", formula_str, "]: ", e)
-                    push!(errors, 20.0)
-                end
-            end
-            return mean(errors) + (node_count * penalty_weight)
-        end
+        objective = (c) -> calculate_fitness(
+            eval_func, c, df_sample, target_sample, formula_expr;
+            penalty_weight=penalty_weight,
+            on_error=(e) -> println(stderr, "Evaluation error for formula [", formula_str, "]: ", e)
+        )
 
         if num_coeffs > 0
             best_coeffs, best_fitness = optimize_coefficients(
@@ -124,6 +109,8 @@ function main(in_io::IO=stdin, out_io::IO=stdout)
         end
 
         # 5. 結果の算出
+        # 注意: "rmse" というキー名だが、実際は500行サンプルに対するMAE(外れ値キャップ付き)。
+        # 呼び出し側(loop.py等)との互換性のためキー名は維持している。
         penalty = node_count * penalty_weight
         rmse = max(0.0, best_fitness - penalty)
 

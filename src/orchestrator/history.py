@@ -1,6 +1,8 @@
 # history.py
 
-from dataclasses import dataclass
+import json
+import os
+from dataclasses import dataclass, asdict
 from typing import List, Dict, Any, Optional
 
 @dataclass
@@ -30,6 +32,21 @@ class HistoryManager:
 
     def get_best_record(self) -> Optional[GenerationRecord]:
         return self.best_record
+
+    def save_to_json(self, filepath: str) -> None:
+        """
+        世代履歴を results/history_<target>.json 形式でディスクに永続化する。
+        """
+        dirname = os.path.dirname(filepath)
+        if dirname:
+            os.makedirs(dirname, exist_ok=True)
+
+        data = {
+            "records": [asdict(r) for r in self.records],
+            "best_record": asdict(self.best_record) if self.best_record else None,
+        }
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
 
     def get_context_dict(self) -> Dict[str, Any]:
         """

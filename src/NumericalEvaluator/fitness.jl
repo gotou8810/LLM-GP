@@ -1,6 +1,7 @@
 # fitness.jl
 
 using DataFrames
+using Statistics
 
 """
 ASTのノード数をカウントし、式の複雑さを評価します。
@@ -23,40 +24,39 @@ end
 
 """
 パース済み関数、係数、データ、実測値(y)を受け取り、総合適応度スコアを返す。
-ペナルティ（制約違反、複雑さ）はここに合算される。
+評価指標は平均絶対誤差(MAE、外れ値による最適化の不安定化を防ぐため error_cap で上限を設ける)とし、
+ノード数に比例する複雑さペナルティを加算する。cli.jl の実行時目的関数と同一のロジック。
 """
-function calculate_fitness(eval_func::Function, coeffs::Vector{Float64}, data_df::DataFrame, target_y::Vector{Float64}, formula_expr::Expr)::Float64
+function calculate_fitness(eval_func::Function, coeffs::Vector{Float64}, data_df::DataFrame, target_y::Vector{Float64}, formula_expr::Expr;
+                            penalty_weight::Float64=0.001, error_cap::Float64=20.0,
+                            on_error::Union{Function,Nothing}=nothing)::Float64
     n = nrow(data_df)
     if n == 0
         return Inf
     end
-    
-    # 予測値の計算
-    squared_errors = 0.0
+
+    errors = Float64[]
     for i in 1:n
         row = data_df[i, :]
         try
             pred = eval_func(coeffs, row)
-            
-            # NaN や Inf の場合は大きなペナルティを与える
+
             if isnan(pred) || isinf(pred)
-                return Inf
+                push!(errors, error_cap)
+            else
+                err = abs(pred - target_y[i])
+                push!(errors, min(err, error_cap))
             end
-            
-            squared_errors += (pred - target_y[i])^2
         catch e
-            # 評価エラー（ゼロ除算など）の場合は最悪の適応度を返す
-            return Inf
+            if on_error !== nothing
+                on_error(e)
+            end
+            push!(errors, error_cap)
         end
     end
-    
-    rmse = sqrt(squared_errors / n)
-    
-    # ペナルティの計算（ここでは単純にノード数に比例するペナルティとする）
-    # 例：ノード1つにつき 0.01 のペナルティを加算
-    penalty_weight = 0.01
+
+    mae = mean(errors)
     complexity_penalty = count_nodes(formula_expr) * penalty_weight
-    
-    # 総合Fitness
-    return rmse + complexity_penalty
+
+    return mae + complexity_penalty
 end
