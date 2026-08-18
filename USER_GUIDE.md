@@ -12,7 +12,7 @@
 #### Python (3.10+)
 以下のライブラリが必要です。
 ```bash
-pip install google-generativeai pydantic tenacity
+pip install anthropic pydantic tenacity
 ```
 
 #### Julia (1.9+)
@@ -23,9 +23,9 @@ Pkg.add(["DataFrames", "RData", "JSON", "BlackBoxOptim", "Downloads"])
 ```
 
 ### 1.2 LLM APIキーの設定
-Google Gemini API等のAPIキーを環境変数として設定します。
+Anthropic Claude APIのAPIキーを環境変数として設定します。
 ```bash
-export GOOGLE_API_KEY='あなたのAPIキー'
+export ANTHROPIC_API_KEY='あなたのAPIキー'
 ```
 
 
@@ -62,7 +62,7 @@ python src/orchestrator/main.py --target "XMEAS(7)" --max-gen 20 --interactive
 - **対象**: `TEP_FF.RData` (正常データ)
 
 ### ステップ2：初期数式の生成（LLM）
-LLM（Gemini等）が「化学工学エキスパート」として、物理的知見に基づいた初期数式候補を生成します。
+LLM（Claude）が「化学工学エキスパート」として、物理的知見に基づいた初期数式候補を生成します。
 - **例**: `P = c1 * XMEAS(6) * (XMEAS(9) + 273.15)`
   （ボイル・シャルルの法則などを模した形）
 

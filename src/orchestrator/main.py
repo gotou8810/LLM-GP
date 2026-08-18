@@ -67,11 +67,11 @@ def main():
         client = InteractiveLLMClient()
     else:
         logger.info("Running in API mode.")
-        # LLMClient は環境変数等からAPIキーを取得することを想定
-        api_key = os.getenv("GOOGLE_API_KEY")
-        if not api_key:
-            logger.warning("GOOGLE_API_KEY not found in environment. API calls may fail.")
-        client = LLMClient(api_key=api_key)
+        # LLMClient (Anthropic SDK) は ANTHROPIC_API_KEY -> ANTHROPIC_AUTH_TOKEN ->
+        # `ant auth login` のプロファイルの順で自動的にAPIキー/認証情報を解決する
+        if not os.getenv("ANTHROPIC_API_KEY") and not os.getenv("ANTHROPIC_AUTH_TOKEN"):
+            logger.warning("ANTHROPIC_API_KEY not found in environment. Falling back to `ant auth login` profile if configured.")
+        client = LLMClient()
 
     facade = LLMFacade(
         prompt_manager=PromptManager(),

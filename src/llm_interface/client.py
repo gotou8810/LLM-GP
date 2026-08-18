@@ -1,26 +1,29 @@
 # client.py
 
-import os
-import google.generativeai as genai
+import anthropic
 from tenacity import retry, stop_after_attempt, wait_exponential
 from .exceptions import CommunicationError
 
 class LLMClient:
     """
-    Google Generative AI (Gemini) APIを使用してLLMと通信するクライアント
+    Anthropic Claude APIを使用してLLMと通信するクライアント
     """
-    def __init__(self, api_key: str = None, model_name: str = "gemini-2.5-pro"):
-        api_key = api_key or os.environ.get("GEMINI_API_KEY")
-        if api_key:
-            genai.configure(api_key=api_key)
-            
-        self.model = genai.GenerativeModel(model_name)
-        
+    def __init__(self, api_key: str = None, model_name: str = "claude-opus-5", max_tokens: int = 16000):
+        # api_key を省略した場合、SDKが ANTHROPIC_API_KEY -> ANTHROPIC_AUTH_TOKEN ->
+        # `ant auth login` のプロファイルの順で自動的に認証情報を解決する
+        self.client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
+        self.model_name = model_name
+        self.max_tokens = max_tokens
+
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), reraise=True)
     def _send_with_retry(self, prompt: str) -> str:
         try:
-            response = self.model.generate_content(prompt)
-            return response.text
+            response = self.client.messages.create(
+                model=self.model_name,
+                max_tokens=self.max_tokens,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return next((block.text for block in response.content if block.type == "text"), "")
         except Exception as e:
             # retryデコレータが拾えるようにそのまま再スローするが、
             # 最終的に失敗した場合は tenacity がこの例外を投げるので、
