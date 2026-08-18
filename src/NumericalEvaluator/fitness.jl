@@ -39,7 +39,10 @@ function calculate_fitness(eval_func::Function, coeffs::Vector{Float64}, data_df
     for i in 1:n
         row = data_df[i, :]
         try
-            pred = eval_func(coeffs, row)
+            # eval_func は parse_formula_full 内で eval() により動的生成された関数であり、
+            # 呼び出し元(cli.jl の main())とは異なる world age に属する。
+            # 通常呼び出しだと "world age" MethodError になるため invokelatest で回避する。
+            pred = Base.invokelatest(eval_func, coeffs, row)
 
             if isnan(pred) || isinf(pred)
                 push!(errors, error_cap)
