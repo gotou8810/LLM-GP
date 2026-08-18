@@ -3,10 +3,10 @@
 Kiro-style Spec-Driven Development on an agentic SDLC
 
 ## Project Memory
-Project memory keeps persistent guidance (steering, specs notes, component docs) so Gemini CLI honors your standards each run. Treat it as the long-lived source of truth for patterns, conventions, and decisions.
+Project memory keeps persistent guidance (steering, specs notes, component docs) so Claude Code honors your standards each run. Treat it as the long-lived source of truth for patterns, conventions, and decisions.
 
 - Use `.kiro/steering/` for project-wide policies: architecture principles, naming schemes, security constraints, tech stack decisions, api standards, etc.
-- Use local `GEMINI.md` files for feature or library context (e.g. `src/lib/payments/GEMINI.md`): describe domain assumptions, API contracts, or testing conventions specific to that folder. Gemini CLI auto-loads these when working in the matching path.
+- Use local `CLAUDE.md` files for feature or library context (e.g. `src/lib/payments/CLAUDE.md`): describe domain assumptions, API contracts, or testing conventions specific to that folder. Claude Code auto-loads these when working in the matching path.
 - Specs notes stay with each spec (under `.kiro/specs/`) to guide specification-level workflows.
 
 ## Project Context
@@ -46,17 +46,16 @@ Project memory keeps persistent guidance (steering, specs notes, component docs)
 - Progress check: `/kiro-spec-status {feature}` (use anytime)
 
 ## Skills Structure
-Skills are located in `.gemini/skills/kiro-*/SKILL.md`
+Skills are located in `.claude/skills/kiro-*/SKILL.md`
 - Each skill is a directory with a `SKILL.md` file
-- Use `/skills` to inspect currently available skills
-- Invoke a skill directly with `/kiro-<skill-name>`
+- Skills matching the current task appear in the available-skills listing; invoke one with the Skill tool, or directly with `/kiro-<skill-name>`
 - **If there is even a 1% chance a skill applies to the current task, invoke it.** Do not skip skills because the task seems simple.
 - `kiro-review` — task-local adversarial review protocol used by reviewer subagents
 - `kiro-debug` — root-cause-first debug protocol used by debugger subagents
 - `kiro-verify-completion` — fresh-evidence gate before success or completion claims
 
 ## Multi-Agent
-Gemini CLI supports agent-as-tool for sub-agent dispatch. Skills with "Parallel Research" sections list independent work items that benefit from sub-agent spawning.
+Claude Code supports the Agent tool for sub-agent dispatch (e.g. `general-purpose` for fresh subagents, `fork` to inherit context). Skills with "Parallel Research" sections list independent work items that benefit from sub-agent spawning.
 
 ## Development Rules
 - 3-phase approval workflow: Requirements → Design → Tasks → Implementation
@@ -110,4 +109,3 @@ Gemini CLI supports agent-as-tool for sub-agent dispatch. Skills with "Parallel 
   - したがって、異常が発生してから残差が実際に閾値を突破するまでには、物理的なタイムラグ（検知遅延）が生じるのが自然な動的挙動であり、「発生から0分で完璧に即時検知した」などの因果律を無視した全知全能の主張は絶対に行わないこと。
 - **客観的かつ抑制の効いたトーンの維持**:
   - 魔法のような万能ツールとして記述するのではなく、「特定の物理的異常に対して、誤報を出さずに確実に見抜く、ロバストな特化型モデル」として、専門家が納得する冷徹で学術的なトーンで論述を展開すること。
-

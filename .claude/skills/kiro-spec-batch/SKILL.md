@@ -65,10 +65,10 @@ Create a complete specification for feature "{feature-name}".
 1. Read the brief at .kiro/specs/{feature-name}/brief.md for feature context
 2. Read the roadmap at .kiro/steering/roadmap.md for project context
 3. Execute the full spec pipeline. For each phase, read the corresponding skill's SKILL.md for complete instructions (templates, rules, review gates):
-   a. Initialize: Read .gemini/skills/kiro-spec-init/SKILL.md, then create spec.json and requirements.md
-   b. Generate requirements: Read .gemini/skills/kiro-spec-requirements/SKILL.md, then follow its steps
-   c. Generate design: Read .gemini/skills/kiro-spec-design/SKILL.md, then follow its steps
-   d. Generate tasks: Read .gemini/skills/kiro-spec-tasks/SKILL.md, then follow its steps
+   a. Initialize: Read .claude/skills/kiro-spec-init/SKILL.md, then create spec.json and requirements.md
+   b. Generate requirements: Read .claude/skills/kiro-spec-requirements/SKILL.md, then follow its steps
+   c. Generate design: Read .claude/skills/kiro-spec-design/SKILL.md, then follow its steps
+   d. Generate tasks: Read .claude/skills/kiro-spec-tasks/SKILL.md, then follow its steps
 4. Set all approvals to true in spec.json (auto-approve mode, equivalent of -y flag)
 5. Report completion with file list and task count
 ```
@@ -83,7 +83,7 @@ If multi-agent is not available, execute features in the wave sequentially.
 
 ## Step 4: Cross-Spec Review
 
-After all waves complete, spawn a **single sub-agent** for cross-spec consistency review. Use the `spec-reviewer` agent if available (defined in `.gemini/agents/spec-reviewer.md`). This is the highest-value quality gate -- it catches issues that per-spec review gates cannot.
+After all waves complete, spawn a **single sub-agent** for cross-spec consistency review. Use the `spec-reviewer` agent if available (defined in `.claude/agents/spec-reviewer.md`). This is the highest-value quality gate -- it catches issues that per-spec review gates cannot.
 
 **Sub-agent task**:
 
