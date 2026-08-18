@@ -1,6 +1,6 @@
 # prompt_manager.py
 
-DEFAULT_SYSTEM_PROMPT = """You are an expert in symbolic regression and industrial process control.
+DEFAULT_SYSTEM_PROMPT = r"""You are an expert in symbolic regression and industrial process control.
 Your task is to propose a mathematical formula to model the target variable in the Tennessee Eastman Process (TEP).
 
 CRITICAL PHYSICAL CAUSALITY RULE:
@@ -17,6 +17,7 @@ CRITICAL RULES FOR FORMULA SYNTAX (Julia Language):
     - **CRITICAL FOR REACTION PRESSURE (xmeas_7)**: If your target is `xmeas_7` (Reactor Pressure), you MUST NOT use `xmeas_13` (Separator Pressure) under any circumstances. Modeling downstream pressure to predict upstream pressure creates a spurious feedback correlation (The Spurious Correlation Trap).
     - **CRITICAL FOR SEPARATOR PRESSURE (xmeas_13)**: If your target is `xmeas_13` (Separator Pressure), you MUST NOT use `xmeas_7` (Reactor Pressure) under any circumstances.
     - To predict Reactor Pressure changes, rely only on mass balance inputs/outputs such as `xmeas_6` (Reactor Feed Rate), `xmeas_10` (Purge Rate), or `xmv_6` (Purge Valve), along with their lags.
+    - **CAUTION FOR COMPOSITION ANALYZER VARIABLES (xmeas_23 to xmeas_41)**: These are chromatograph-sampled mole % values (Reactor Feed / Purge Gas / Product analysis). In the real process they update only once per analyzer cycle (several minutes) and are held constant between samples, so they can look like they explain short-term dynamics through discretization/sampling-delay artifacts rather than genuine physical causality. If you use one of these, justify it via an explicit physical mechanism (e.g., partial-pressure contribution to a shared vapor space via Dalton's law) rather than purely because it is MIC-flagged as statistically informative.
 3.  **Coefficients**: Use `c[1]`, `c[2]`, etc.
 4.  **Operators**: Julia syntax (`^`, `exp`, `log`, `sin`, `cos`).
 
@@ -47,6 +48,25 @@ VARIABLE DICTIONARY (TEP):
 - xmeas_20: Compressor Work
 - xmeas_21: Reactor Cooling Water Outlet Temperature
 - xmeas_22: Separator Cooling Water Outlet Temperature
+- xmeas_23: Reactor Feed Analysis - Component A (mole %)
+- xmeas_24: Reactor Feed Analysis - Component B (mole %)
+- xmeas_25: Reactor Feed Analysis - Component C (mole %)
+- xmeas_26: Reactor Feed Analysis - Component D (mole %)
+- xmeas_27: Reactor Feed Analysis - Component E (mole %)
+- xmeas_28: Reactor Feed Analysis - Component F (mole %)
+- xmeas_29: Purge Gas Analysis - Component A (mole %)
+- xmeas_30: Purge Gas Analysis - Component B (mole %)
+- xmeas_31: Purge Gas Analysis - Component C (mole %)
+- xmeas_32: Purge Gas Analysis - Component D (mole %)
+- xmeas_33: Purge Gas Analysis - Component E (mole %)
+- xmeas_34: Purge Gas Analysis - Component F (mole %)
+- xmeas_35: Purge Gas Analysis - Component G (mole %)
+- xmeas_36: Purge Gas Analysis - Component H (mole %)
+- xmeas_37: Product Analysis - Component D (mole %)
+- xmeas_38: Product Analysis - Component E (mole %)
+- xmeas_39: Product Analysis - Component F (mole %)
+- xmeas_40: Product Analysis - Component G (mole %)
+- xmeas_41: Product Analysis - Component H (mole %)
 - xmv_1: D Feed Flow Valve
 - xmv_2: E Feed Flow Valve
 - xmv_3: A Feed Flow Valve
@@ -95,6 +115,25 @@ TEP_VAR_DESCS = {
     "xmeas_20": "Compressor Work",
     "xmeas_21": "Reactor Cooling Water Outlet Temperature",
     "xmeas_22": "Separator Cooling Water Outlet Temperature",
+    "xmeas_23": "Reactor Feed Analysis - Component A (mole %)",
+    "xmeas_24": "Reactor Feed Analysis - Component B (mole %)",
+    "xmeas_25": "Reactor Feed Analysis - Component C (mole %)",
+    "xmeas_26": "Reactor Feed Analysis - Component D (mole %)",
+    "xmeas_27": "Reactor Feed Analysis - Component E (mole %)",
+    "xmeas_28": "Reactor Feed Analysis - Component F (mole %)",
+    "xmeas_29": "Purge Gas Analysis - Component A (mole %)",
+    "xmeas_30": "Purge Gas Analysis - Component B (mole %)",
+    "xmeas_31": "Purge Gas Analysis - Component C (mole %)",
+    "xmeas_32": "Purge Gas Analysis - Component D (mole %)",
+    "xmeas_33": "Purge Gas Analysis - Component E (mole %)",
+    "xmeas_34": "Purge Gas Analysis - Component F (mole %)",
+    "xmeas_35": "Purge Gas Analysis - Component G (mole %)",
+    "xmeas_36": "Purge Gas Analysis - Component H (mole %)",
+    "xmeas_37": "Product Analysis - Component D (mole %)",
+    "xmeas_38": "Product Analysis - Component E (mole %)",
+    "xmeas_39": "Product Analysis - Component F (mole %)",
+    "xmeas_40": "Product Analysis - Component G (mole %)",
+    "xmeas_41": "Product Analysis - Component H (mole %)",
     "xmv_1": "D Feed Flow Valve",
     "xmv_2": "E Feed Flow Valve",
     "xmv_3": "A Feed Flow Valve",
