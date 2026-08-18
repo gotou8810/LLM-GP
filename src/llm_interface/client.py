@@ -8,7 +8,7 @@ class LLMClient:
     """
     Anthropic Claude APIを使用してLLMと通信するクライアント
     """
-    def __init__(self, api_key: str = None, model_name: str = "claude-opus-5", max_tokens: int = 16000):
+    def __init__(self, api_key: str = None, model_name: str = "claude-sonnet-5", max_tokens: int = 16000):
         # api_key を省略した場合、SDKが ANTHROPIC_API_KEY -> ANTHROPIC_AUTH_TOKEN ->
         # `ant auth login` のプロファイルの順で自動的に認証情報を解決する
         self.client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
