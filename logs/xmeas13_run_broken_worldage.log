@@ -1,0 +1,61 @@
+2026-08-18 15:37:17,640 [INFO] LLM-GP: Initializing data with dataset: TEP_FaultFree_Training.RData
+2026-08-18 15:37:17,654 [INFO] LLM-GP: Running in API mode.
+2026-08-18 15:37:17,705 [INFO] LLM-GP: Computing MIC scores for screening...
+2026-08-18 15:37:18,047 [WARNING] LLM-GP: Failed to calculate MIC scores: module 'pyreadr' has no attribute 'read_rdata'. Skipping MIC screening.
+2026-08-18 15:37:18,047 [INFO] src.orchestrator.loop: Starting Evolutionary Loop...
+2026-08-18 15:37:18,047 [INFO] src.orchestrator.loop: --- Generation 1 ---
+2026-08-18 15:37:25,512 [INFO] httpx: HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-08-18 15:37:25,562 [INFO] src.orchestrator.loop: Proposed Formula: c[1]*(xmeas_6 - xmeas_6*0) + c[2]*xmeas_6 + c[3]*xmeas_11 - c[4]*xmeas_14 - c[5]*xmv_7 - c[6]*xmeas_10 + c[7]*(xmeas_22 - c[8])
+2026-08-18 15:37:25,563 [INFO] src.orchestrator.loop: LLM Feedback: Strategy: Separator pressure (xmeas_13) accumulates due to vapor-liquid balance in the separator drum. Physically, pressure rises when vapor inflow (driven by reactor feed rate xmeas_6, and separator temperature xmeas_11 which affects vapor pressure/flash behavior) exceeds vapor/liquid outflow (separator underflow liquid xmeas_14 modulated by valve xmv_7, and purge rate xmeas_10 which relieves vapor pressure). I included separator cooling water outlet temperature (xmeas_22) as a proxy for condensation efficiency—higher outlet temp means less condensation, so more vapor remains, increasing pressure. I avoided xmeas_7 (reactor pressure) per the strict rule. Coefficients c[1]-c[8] will be fit to capture the correct signs and magnitudes; c[1] and c[2] both scale xmeas_6 redundantly and can be merged/pruned by the solver, but I left the structure flexible for the regression to find the right combination of feed-driven pressure buildup vs. outflow-driven pressure relief.
+2026-08-18 15:40:26,351 [WARNING] src.orchestrator.loop: Evaluation failed: Evaluation timed out after 180 seconds.
+2026-08-18 15:40:26,463 [INFO] src.orchestrator.loop: --- Generation 2 ---
+2026-08-18 15:40:33,287 [INFO] httpx: HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-08-18 15:40:33,288 [INFO] src.orchestrator.loop: Proposed Formula: c[1]*xmeas_6 + c[2]*xmeas_11 - c[3]*xmeas_14 - c[4]*xmv_7 - c[5]*xmeas_10 + c[6]*(xmeas_22 - c[7])
+2026-08-18 15:40:33,288 [INFO] src.orchestrator.loop: LLM Feedback: The previous formula likely timed out due to redundant/degenerate terms (e.g., xmeas_6 - xmeas_6*0 is a no-op that wastes evaluation time and may cause optimizer instability). I simplified by removing that redundancy while keeping the physically meaningful terms: xmeas_6 (reactor feed rate, mass in to separator via reactor), xmeas_11 (separator temperature, affects vapor pressure), xmeas_14 (separator underflow, liquid outflow), xmv_7 (underflow valve position, correlates with outflow), xmeas_10 (purge rate, vapor outflow reducing pressure), and xmeas_22 (separator cooling water outlet temp, proxy for condensation/cooling duty affecting vapor pressure via energy balance). This reflects mass balance (inflow via reactor feed, outflow via underflow/purge) and energy balance (temperature-driven vapor pressure changes) without using xmeas_7 or xmeas_13 directly. Reduced term count and removed the identity term should also improve computational efficiency and avoid timeout issues.
+2026-08-18 15:43:34,152 [WARNING] src.orchestrator.loop: Evaluation failed: Evaluation timed out after 180 seconds.
+2026-08-18 15:43:34,152 [INFO] src.orchestrator.loop: --- Generation 3 ---
+2026-08-18 15:43:43,017 [INFO] httpx: HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-08-18 15:43:43,019 [INFO] src.orchestrator.loop: Proposed Formula: c[1]*xmeas_6 + c[2]*xmeas_11 - c[3]*xmeas_14 - c[4]*xmv_7 - c[5]*xmeas_10 + c[6]*xmeas_22
+2026-08-18 15:43:43,019 [INFO] src.orchestrator.loop: LLM Feedback: The previous formulas contained a redundant, always-zero term (xmeas_6 - xmeas_6*0) which adds no information but increases complexity and likely contributed to evaluation timeouts due to unnecessary computation/parsing overhead or degenerate parameter sensitivity. I removed that dead term and the extra bias constant c[8] (which was likely poorly identifiable and slowed convergence), keeping a clean linear mass/energy balance model:
+
+- xmeas_6 (reactor feed rate) as a proxy for vapor inflow into the separator loop (physically upstream mass input),
+- xmeas_11 (separator temperature) capturing energy-driven vapor pressure changes,
+- xmeas_14 (separator underflow) and xmv_7 (underflow valve) as liquid outflow terms reducing accumulated mass/pressure,
+- xmeas_10 (purge rate) as vapor outflow reducing pressure,
+- xmeas_22 (condenser CW outlet temp) as a proxy for condensation efficiency affecting vapor accumulation.
+
+This avoids using xmeas_7 (reactor pressure) and xmeas_13 (target itself), respecting causality rules, while keeping the formula simple (6 coefficients, linear) to reduce computational cost and avoid timeout errors.
+2026-08-18 15:46:43,898 [WARNING] src.orchestrator.loop: Evaluation failed: Evaluation timed out after 180 seconds.
+2026-08-18 15:46:43,898 [INFO] src.orchestrator.loop: --- Generation 4 ---
+2026-08-18 15:46:51,024 [INFO] httpx: HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-08-18 15:46:51,025 [INFO] src.orchestrator.loop: Proposed Formula: c[1]*xmeas_6 + c[2]*xmeas_11 - c[3]*xmeas_14 - c[4]*xmv_7 - c[5]*xmeas_10 + c[6]*xmeas_22
+2026-08-18 15:46:51,025 [INFO] src.orchestrator.loop: LLM Feedback: The previous formulas kept timing out, likely due to redundant terms (like `xmeas_6 - xmeas_6*0`) or excessive nested parentheses with an extra bias constant `c[8]` that may have caused numerical instability or slow convergence in the fitting routine. I simplified the formula by removing the redundant zero-term and the standalone bias constant, keeping it as a clean linear combination of physically meaningful mass-balance-related variables:
+
+- `xmeas_6` (Reactor Feed Rate, mass inflow to the separator system)
+- `xmeas_11` (Separator Temperature, affects vapor pressure via Antoine-type relations)
+- `xmeas_14` (Separator Underflow, liquid outflow reducing pressure buildup)
+- `xmv_7` (Separator Underflow Valve, controls outflow)
+- `xmeas_10` (Purge Rate, vapor outflow reducing pressure)
+- `xmeas_22` (Separator Cooling Water Outlet Temp, proxy for condensation rate affecting vapor pressure)
+
+This retains the physical causality (mass/energy balance affecting separator pressure accumulation) while being computationally lighter (6 coefficients instead of 8, no nested arithmetic) to avoid evaluation timeouts. If this still times out, the issue is likely with the evaluation environment/timeout limit rather than formula complexity, and further simplification (fewer terms) may be needed.
+2026-08-18 15:49:51,967 [WARNING] src.orchestrator.loop: Evaluation failed: Evaluation timed out after 180 seconds.
+2026-08-18 15:49:51,967 [INFO] src.orchestrator.loop: --- Generation 5 ---
+2026-08-18 15:50:00,334 [INFO] httpx: HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-08-18 15:50:00,336 [INFO] src.orchestrator.loop: Proposed Formula: c[1]*xmeas_6 + c[2]*xmeas_11 - c[3]*xmeas_14 - c[4]*xmeas_10 - c[5]*xmv_7 + c[6]*xmeas_22
+2026-08-18 15:50:00,336 [INFO] src.orchestrator.loop: LLM Feedback: The previous attempts timed out, likely due to excessive nesting/redundant terms (e.g., xmeas_6 - xmeas_6*0) causing symbolic evaluation overhead or an unstable/degenerate parameterization confusing the optimizer. I simplified to a clean linear mass/energy-balance form with 6 coefficients only, removing the redundant zero-term and the bias-shifted xmeas_22 term (c[7]*(xmeas_22-c[8]) is redundant with c[6]*xmeas_22 since the constant folds into intercept, which isn't needed for a Δy model). Physical rationale: separator pressure rises with vapor inflow from reactor (xmeas_6) and separator temperature (xmeas_11, raises vapor pressure), and falls with vapor/liquid outflows (xmeas_14 underflow liquid draining, xmeas_10 purge removing vapor, xmv_7 valve opening increasing outflow), and cooling water temp (xmeas_22) affects condensation rate. This keeps the formula lightweight to avoid timeout while retaining physical mass-balance causality using only allowed variables (no xmeas_7 or xmeas_13).
+2026-08-18 15:53:01,214 [WARNING] src.orchestrator.loop: Evaluation failed: Evaluation timed out after 180 seconds.
+2026-08-18 15:53:01,214 [INFO] src.orchestrator.loop: --- Generation 6 ---
+2026-08-18 15:53:08,048 [INFO] httpx: HTTP Request: POST https://api.anthropic.com/v1/messages "HTTP/1.1 200 OK"
+2026-08-18 15:53:08,050 [INFO] src.orchestrator.loop: Proposed Formula: c[1]*xmeas_6 + c[2]*xmeas_11 - c[3]*xmeas_14 - c[4]*xmv_7 - c[5]*xmeas_10 + c[6]*xmeas_22
+2026-08-18 15:53:08,050 [INFO] src.orchestrator.loop: LLM Feedback: The previous timeouts were likely caused by the redundant, non-simplified term `c[1]*(xmeas_6 - xmeas_6*0) + c[2]*xmeas_6` (which is mathematically degenerate - two coefficients on the same variable) confusing the optimizer's convergence, and by the extra bias term `(xmeas_22 - c[8])` inside a product introducing an unnecessary nonlinear coefficient interaction that stalls fitting.
+
+Strategy: I simplified to a clean linear model based on mass/energy balance in the separator drum:
+- xmeas_6 (Reactor Feed Rate) drives vapor/liquid input to separator, increasing pressure.
+- xmeas_11 (Separator Temperature) increases vapor pressure via higher temperature (energy balance on flash vaporization).
+- xmeas_14 (Separator Underflow) removes liquid mass, indirectly reducing pressure buildup.
+- xmv_7 (Separator Underflow Valve) controls liquid outflow, affecting vapor space.
+- xmeas_10 (Purge Rate) removes vapor mass directly, reducing pressure.
+- xmeas_22 (Separator Cooling Water Outlet Temp) reflects condensation duty, inversely related to vapor pressure accumulation.
+
+This avoids exponential/complex nesting and keeps evaluation fast, using only single-use variables with no redundant or duplicate coefficient structures that could cause solver stalls or infinite loops.
