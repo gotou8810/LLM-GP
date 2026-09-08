@@ -13,6 +13,8 @@ class GenerationRecord:
     penalty: float
     fitness: float
     feedback: str
+    sign_valid: bool = True  # Method A符号チェック(loop.pyのcheck_sign_consistency)にFAILEDした記録はFalse。
+    # 法則を宣言していない(自由記号回帰)場合はTrueのまま=中立扱い。
 
 class HistoryManager:
     """
@@ -25,9 +27,17 @@ class HistoryManager:
 
     def add_record(self, record: GenerationRecord) -> None:
         self.records.append(record)
-        
-        # 初回またはより良い(小さい)fitnessが見つかったら更新
-        if self.best_record is None or record.fitness < self.best_record.fitness:
+
+        # ベスト更新: sign_valid(Method A符号チェック合格)を最優先し、
+        # 同じsign_valid同士でのみfitnessの小ささを比較する。
+        # 符号チェックに失敗した記録は、数値上のfitnessがどれだけ良くても
+        # sign_valid=Trueの記録がある限りベストにはしない(物理的に検証されていないため)。
+        if self.best_record is None:
+            self.best_record = record
+        elif record.sign_valid != self.best_record.sign_valid:
+            if record.sign_valid:
+                self.best_record = record
+        elif record.fitness < self.best_record.fitness:
             self.best_record = record
 
     def get_best_record(self) -> Optional[GenerationRecord]:

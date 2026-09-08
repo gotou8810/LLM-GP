@@ -275,4 +275,19 @@ XMEAS(13)[分離器圧力]の因果ベース再定式化とFDI全データ検証
   - フェーズ4: 20種のIDV全てについて検知可否を棚卸しし、原理的に検知不可能なものを正直に報告。
 - 次回セッション開始時のアクション: フェーズ0(a)(b)(c)のどれから着手するかをユーザーと確認して着手する。
 
+㉒ (2026/09/07)
+フェーズ0(a): 相関防止ルールの一般化を実施。着手順序は (a) → (c) → (b) で合意。
+- 目的と経緯:
+  - ㉑で指摘された `xmeas_13`⇄`xmeas_16` の相関の罠疑惑を受け、`main.py` の `FORBIDDEN_VARIABLE_PAIRS`(xmeas_7⇄xmeas_13の1ペアのみのハードコード)を、ユニット構造に基づく一般規則へ置き換えた。
+  - TEPの中でアキュムレーション状態量(圧力・液位・温度)を持つのはReactor(`xmeas_7/8/9`)・Separator(`xmeas_11/12/13`)・Stripper(`xmeas_15/16/18`)の3ユニットのみで、Mixer/Condenser/Compressorはこれらの状態量を持たない流束通過ノード。再循環ループ(Separator→Compressor→Mixer→Reactor、Separator→Stripper→Mixer→Reactor)を通じてこの3ユニットは相互に直結しているとみなせるため、「ターゲットが3ユニットいずれかの状態量である場合、自ユニット以外の2ユニットの状態量すべてを禁止候補とする」という一般規則を定式化。同一ユニット内の状態量同士(熱力学的に正当な結合の可能性がある)は今回のスコープ外とした。
+- 実施内容:
+  - `src/orchestrator/preprocessing.py` に `UNIT_STATE_VARIABLES` マップと `compute_forbidden_variables()` を新規追加。
+  - `src/orchestrator/main.py` の `FORBIDDEN_VARIABLE_PAIRS` ハードコード辞書を削除し、`compute_forbidden_variables()` の呼び出しに置換。
+  - `src/llm_interface/prompt_manager.py` の個別2ルール(xmeas_7/xmeas_13専用の文言)を、ユニット構造に基づく一般規則の説明に統合。
+  - `tests/orchestrator/test_preprocessing.py` を新規作成(6ケース、`xmeas_13`が`xmeas_16`を禁止集合に含むことの回帰テストを含む)。全24件のテストスイート(既存18件+新規6件)が成功することを確認。
+  - `compute_forbidden_variables('xmeas_13')` の実行結果に `xmeas_16` が含まれることを直接確認し、今後の新規探索でこの相関の罠が機械的に排除されることを検証した。
+- 成果とスコープ:
+  - この一般化は**今後の新規探索**にのみ適用され、既に完成済みのXMEAS(13)モデル(xmeas_16を使用)自体は遡及的に修正していない。その健全性の検証は次のフェーズ0(c)で行う。
+- 次回セッション開始時のアクション: フェーズ0(c) 現行XMEAS(13)モデルの `xmeas_16` 使用について変数除去アブレーション検証(`verify_xmeas13_fdi.jl` を流用し、xmeas_16関連項を除去/簡略化した場合のR²・FDR変化を測定)に着手する。
+
 

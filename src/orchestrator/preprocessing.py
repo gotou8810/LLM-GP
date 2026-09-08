@@ -6,6 +6,43 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# TEPプロセスの各ユニットが持つ「アキュムレーション状態量」（圧力・液位・温度）。
+# Mixer/Condenser/Compressorはこれらの状態量を持たない流束通過ノードであり、
+# 再循環ループ（Separator->Compressor->Mixer->Reactor、Separator->Stripper->Mixer->Reactor）
+# を通じてReactor/Separator/Stripperの3ユニットは相互に直結しているとみなす。
+UNIT_STATE_VARIABLES = {
+    "Reactor": {"xmeas_7", "xmeas_8", "xmeas_9"},
+    "Separator": {"xmeas_11", "xmeas_12", "xmeas_13"},
+    "Stripper": {"xmeas_15", "xmeas_16", "xmeas_18"},
+}
+
+
+def compute_forbidden_variables(target_variable: str) -> set:
+    """
+    ターゲット変数が属するユニットの状態量（圧力・液位・温度）である場合、
+    直結する他ユニットの状態量を「相関の罠」を招く禁止候補として返す。
+    異常発生時、隣接ユニットの状態量は連動して変化するため、これをモデルの
+    入力に使うと異常への追従（=検知の隠蔽）が起きる。
+    ターゲットが流量・弁開度・組成・仕事率などフラックス系変数の場合は
+    どのユニット状態量にも属さないため、空集合を返す。
+    """
+    target_variable = target_variable.lower()
+    own_unit = None
+    for unit, variables in UNIT_STATE_VARIABLES.items():
+        if target_variable in variables:
+            own_unit = unit
+            break
+
+    if own_unit is None:
+        return set()
+
+    forbidden = set()
+    for unit, variables in UNIT_STATE_VARIABLES.items():
+        if unit != own_unit:
+            forbidden |= variables
+    return forbidden
+
+
 def calculate_mic_scores(df: pd.DataFrame, target_variable: str, n_select: int = 10) -> list:
     """
     minepyライブラリ（またはscikit-learn互換の相互情報量計算）を用いて、

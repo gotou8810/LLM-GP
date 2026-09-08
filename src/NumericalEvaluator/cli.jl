@@ -96,10 +96,25 @@ function main(in_io::IO=stdin, out_io::IO=stdout)
             on_error=(e) -> println(stderr, "Evaluation error for formula [", formula_str, "]: ", e)
         )
 
-        if num_coeffs > 0
+        # 係数について線形な数式(c[1]*term1 + c[2]*term2 + ... の形)であれば、
+        # BlackBoxOptim(有界・確率的なMAE最小化。多重共線性下では収束せず符号すら
+        # 不安定になりうることがXMEAS(13)の検証で判明した)よりも、
+        # 唯一のグローバル最適解を持つ厳密なOLSを優先して使う。
+        # 判定・フィットには探索用サンプル(500行)より大きな標本を使い、信頼性を確保する。
+        linear_fit_rows = min(20000, total_rows - 100)
+        linear_fit_indices = rand(101:total_rows, linear_fit_rows)
+        df_linear_sample = df_norm[linear_fit_indices, :]
+        target_linear_sample = target_y[linear_fit_indices]
+        linear_coeffs = num_coeffs > 0 ? try_linear_ols_fit(eval_func, num_coeffs, df_linear_sample, target_linear_sample) : nothing
+
+        if linear_coeffs !== nothing
+            println(stderr, "Formula is linear in coefficients - using exact OLS fit (n=$(linear_fit_rows)) instead of BlackBoxOptim.")
+            best_coeffs = linear_coeffs
+            best_fitness = objective(best_coeffs)
+        elseif num_coeffs > 0
             best_coeffs, best_fitness = optimize_coefficients(
-                objective, num_coeffs; 
-                search_range=search_range_tuple, 
+                objective, num_coeffs;
+                search_range=search_range_tuple,
                 max_steps=max_steps
             )
         else

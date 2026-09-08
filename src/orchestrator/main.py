@@ -20,14 +20,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("LLM-GP")
 
-# prompt_manager.py の CRITICAL RULES (Spurious Correlation Trap) と対応する、
-# ターゲット変数ごとに使用を禁止する変数のペア。MICスクリーニングの結果が
-# これらの禁止変数を候補として提示しないようフィルタする。
-FORBIDDEN_VARIABLE_PAIRS = {
-    "xmeas_7": {"xmeas_13"},
-    "xmeas_13": {"xmeas_7"},
-}
-
 def main():
     # .env ファイルがあれば読み込む
     load_dotenv()
@@ -94,7 +86,7 @@ def main():
         try:
             import pyreadr
             import pandas as pd
-            from src.orchestrator.preprocessing import calculate_mic_scores
+            from src.orchestrator.preprocessing import calculate_mic_scores, compute_forbidden_variables
             
             result = pyreadr.read_r(args.dataset)
             df = None
@@ -109,7 +101,8 @@ def main():
                 mic_vars = calculate_mic_scores(df, target_normalized, n_select=args.n_mic)
 
                 # 禁止変数(相関の罠)がMIC候補に混入していないか除外する
-                forbidden = FORBIDDEN_VARIABLE_PAIRS.get(target_normalized, set())
+                # (ターゲットが属するユニットに直結した他ユニットの状態量[圧力/液位/温度]を禁止)
+                forbidden = compute_forbidden_variables(target_normalized)
                 if forbidden:
                     removed = [v for v in mic_vars if v in forbidden]
                     mic_vars = [v for v in mic_vars if v not in forbidden]

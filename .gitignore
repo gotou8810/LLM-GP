@@ -1,3 +1,4 @@
 .env
-.env
 *.RData
+__pycache__/
+*.pyc
