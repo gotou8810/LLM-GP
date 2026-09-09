@@ -1,0 +1,40 @@
+Loading dataset: TEP_FaultFree_Training.RData ...
+Loading dataset: TEP_Faulty_Training.RData ...
+FIT runs: 400 / HOLDOUT runs: 100
+
+======================================================================
+モデル: XMEAS(9) v3式 (xmeas_6*xmeas_23*xmeas_26, 全項lag3; 反応速度論)
+======================================================================
+係数 [c1(triple product), c2(intercept)]: [2.3934717162137464e-5, -0.2244775261312601]
+FIT正常データ R^2 (立ち上がり分/ラン除く): -1.2786
+FDI検知閾値: 0.1842
+HOLDOUT正常データ R^2 (out-of-sample): -1.2617
+FAR: 0.00% (0/100 runs)
+
+--- IDVごとのFDR/ADD ---
+  IDV( 1) | FDR=  0.00% | ADD=N/A
+  IDV( 2) | FDR=  0.00% | ADD=N/A
+  IDV( 3) | FDR=  0.00% | ADD=N/A
+  IDV( 4) | FDR= 23.00% | ADD=20.0分
+  IDV( 5) | FDR=  0.00% | ADD=N/A
+  IDV( 6) | FDR=  0.20% | ADD=134.0分
+  IDV( 7) | FDR=  0.00% | ADD=N/A
+  IDV( 8) | FDR=  0.00% | ADD=N/A
+  IDV( 9) | FDR=  0.00% | ADD=N/A
+  IDV(10) | FDR=  0.00% | ADD=N/A
+  IDV(11) | FDR= 85.20% | ADD=196.8分
+  IDV(12) | FDR=  0.00% | ADD=N/A
+  IDV(13) | FDR=  1.00% | ADD=350.0分
+  IDV(14) | FDR=100.00% | ADD=22.0分
+  IDV(15) | FDR=  0.00% | ADD=N/A
+  IDV(16) | FDR=  0.00% | ADD=N/A
+  IDV(17) | FDR=100.00% | ADD=86.9分
+  IDV(18) | FDR=  6.20% | ADD=299.6分
+  IDV(19) | FDR=  1.40% | ADD=242.1分
+  IDV(20) | FDR=  0.00% | ADD=N/A
+
+--- ラン単位 混同行列 ---
+TP=1585  FN=8415  FP=0  TN=100
+Precision=1.0000  Recall=0.1585  F1=0.2736  FAR=0.00%
+
+結果を xmeas9_v3_rigorous_results.json に書き出しました。
