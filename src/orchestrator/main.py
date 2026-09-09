@@ -81,12 +81,13 @@ def main():
 
     # MICスクリーニング処理と目的変数差分化の事前計算
     mic_vars = []
+    reactive_exclusions = {}
     if args.predict_diff:
         logger.info("Computing MIC scores for screening...")
         try:
             import pyreadr
             import pandas as pd
-            from src.orchestrator.preprocessing import calculate_mic_scores, compute_forbidden_variables
+            from src.orchestrator.preprocessing import calculate_mic_scores, compute_forbidden_variables, filter_reactive_variables
             
             result = pyreadr.read_r(args.dataset)
             df = None
@@ -108,6 +109,13 @@ def main():
                     mic_vars = [v for v in mic_vars if v not in forbidden]
                     if removed:
                         logger.warning(f"Excluded forbidden variables from MIC selection (spurious correlation trap): {removed}")
+
+                # 閉ループ制御への"反応"である疑いが強い変数(CCF非対称性検定)を除外する
+                # (差分系列でのCCFが負のラグ側に強く偏っている = ターゲットの変化に反応している証拠)
+                mic_vars, reactive_exclusions = filter_reactive_variables(df, target_normalized, mic_vars)
+                if reactive_exclusions:
+                    details = ", ".join(f"{v}(ratio={d['ratio']:.2f})" for v, d in reactive_exclusions.items())
+                    logger.warning(f"Excluded likely-reactive variables from MIC selection (closed-loop confounding, CCF asymmetry): {details}")
             else:
                 logger.warning("No DataFrame found in RData for MIC screening.")
         except ImportError:
@@ -127,7 +135,8 @@ def main():
         dataset_path=args.dataset,
         target_variable=target_normalized,
         mic_variables=mic_vars,
-        predict_diff=args.predict_diff
+        predict_diff=args.predict_diff,
+        reactive_exclusions=reactive_exclusions
     )
 
     history_path = os.path.join("results", f"history_{target_normalized}.json")

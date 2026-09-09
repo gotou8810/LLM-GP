@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import MagicMock
-from src.orchestrator.loop import EvolutionLoop, check_sign_consistency, check_ideal_gas_magnitude
+from src.orchestrator.loop import EvolutionLoop, check_sign_consistency, check_ideal_gas_magnitude, contains_target_variable
 from src.orchestrator.history import HistoryManager
 from src.llm_interface.models import StructuredResult
 
@@ -69,6 +69,44 @@ def test_check_sign_consistency_accounts_for_explicit_minus_prefix():
     # c[2]=-0.02, 直前に明示的な"-"があるので正味効果は+0.02 -> 期待符号(-)と不一致
     assert "SIGN CHECK FAILED" in result
     assert "MISMATCH" in result
+
+def test_contains_target_variable_detects_direct_use():
+    assert contains_target_variable("c[1]*xmeas_6 + c[2]*xmeas_13 + c[3]", "xmeas_13") is True
+
+def test_contains_target_variable_detects_use_inside_nonlinear_function():
+    assert contains_target_variable("c[1]*sqrt(xmeas_13) + c[2]", "xmeas_13") is True
+
+def test_contains_target_variable_false_when_absent():
+    assert contains_target_variable("c[1]*xmeas_6 + c[2]*xmeas_10", "xmeas_13") is False
+
+def test_contains_target_variable_does_not_false_positive_on_prefix_match():
+    # xmeas_1 は xmeas_13 の部分文字列ではないが、逆(xmeas_13が対象でxmeas_1が式にある)は
+    # 誤検知してはいけない。ここではトークン境界(\b)で判定されることを確認する
+    assert contains_target_variable("c[1]*xmeas_1", "xmeas_13") is False
+    assert contains_target_variable("c[1]*xmeas_130", "xmeas_13") is False
+
+def test_evolution_loop_rejects_self_referential_formula_without_calling_julia():
+    mock_facade = MagicMock()
+    mock_facade.generate_candidate.return_value = StructuredResult(
+        formula="c[1]*xmeas_13 + c[2]", feedback="test", law="Mass balance", expected_signs=[1, 0]
+    )
+    mock_runner = MagicMock()
+
+    hm = HistoryManager()
+    loop = EvolutionLoop(
+        llm_facade=mock_facade,
+        julia_runner=mock_runner,
+        history_manager=hm,
+        max_generations=1,
+        target_rmse=0.01,
+        dataset_path="dummy.RData",
+        target_variable="xmeas_13"
+    )
+    loop.run()
+
+    mock_runner.evaluate_formula.assert_not_called()
+    assert "REJECTED" in hm.records[0].feedback
+    assert hm.records[0].sign_valid is False
 
 def test_check_ideal_gas_magnitude_plausible():
     # 実測データ相当: 平均圧力2633.77kPa, 平均温度80.11℃ -> 理論値P/T(K) ≈ 7.4557

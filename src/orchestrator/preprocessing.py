@@ -6,6 +6,11 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# TEPデータセットの物理変数(xmeas_*, xmv_*)ではない、ラン/サンプル番号やラベル等の
+# ID/メタデータ列。MICスクリーニングの候補から必ず除外する
+# (XMEAS(18)探索で "simulationrun", "sample" がMIC上位候補に混入した実例があった)。
+NON_PHYSICAL_COLUMNS = {"simulationrun", "sample", "faultnumber"}
+
 # TEPプロセスの各ユニットが持つ「アキュムレーション状態量」（圧力・液位・温度）。
 # Mixer/Condenser/Compressorはこれらの状態量を持たない流束通過ノードであり、
 # 再循環ループ（Separator->Compressor->Mixer->Reactor、Separator->Stripper->Mixer->Reactor）
@@ -59,7 +64,8 @@ def calculate_mic_scores(df: pd.DataFrame, target_variable: str, n_select: int =
     if target_variable not in numeric_cols:
         raise ValueError(f"Target variable {target_variable} is not numeric.")
 
-    feature_cols = [col for col in numeric_cols if col != target_variable]
+    feature_cols = [col for col in numeric_cols
+                    if col != target_variable and col.lower() not in NON_PHYSICAL_COLUMNS]
     y = df[target_variable].values
     
     mic_scores = {}
@@ -108,6 +114,88 @@ def calculate_mic_scores(df: pd.DataFrame, target_variable: str, n_select: int =
     
     logger.info(f"Top {n_select} MIC selected variables for {target_variable}: {top_features}")
     return top_features
+
+def compute_ccf_asymmetry(df: pd.DataFrame, target_variable: str, candidate_variable: str,
+                           max_lag: int = 10, run_col: str = "simulationrun", sample_col: str = "sample") -> dict:
+    """
+    差分系列での相互相関関数(CCF)の非対称性を計算する。
+
+    候補変数Xが、ターゲットYに対して真に因果的なdriving forceなのか、それとも
+    閉ループ制御を介してYの変化に"反応"しているだけなのかを診断する。
+    正のラグ側(X(t-k)がY(t)を説明、Xが先行)と負のラグ側(Xが未来=Yに反応)の
+    ピーク相関を比較し、負側が優勢なほど、Xが原因ではなく結果である疑いが強い。
+
+    ラン(simulationrun)ごとに独立して差分・相関を計算し平均する
+    (ラン境界をまたいで差分を取らない。生の水準ではなく差分系列を使うのは、
+    ターゲット自身の自己相関(持続性)だけで見かけ上の対称的な相関が生じるのを防ぐため
+    — XMEAS(13)の検証で、この2点を怠って誤った結論に至った実例がある)。
+    """
+    if run_col not in df.columns or sample_col not in df.columns:
+        return {"ratio": float("nan"), "pos_peak": 0.0, "neg_peak": 0.0, "pos_lag": 0, "neg_lag": 0}
+
+    df_sorted = df.sort_values([run_col, sample_col])
+    lags = list(range(-max_lag, max_lag + 1))
+    sums = np.zeros(len(lags))
+    counts = np.zeros(len(lags))
+
+    for _, g in df_sorted.groupby(run_col):
+        y = np.diff(g[target_variable].values)
+        x = np.diff(g[candidate_variable].values)
+        n = len(x)
+        for i, k in enumerate(lags):
+            if k >= 0:
+                xs, ys = (x[: n - k], y[k:]) if k > 0 else (x, y)
+            else:
+                xs, ys = x[-k:], y[: n + k]
+            if len(xs) > 10 and np.std(xs) > 1e-10 and np.std(ys) > 1e-10:
+                c = np.corrcoef(xs, ys)[0, 1]
+                if not np.isnan(c):
+                    sums[i] += c
+                    counts[i] += 1
+
+    avg = sums / np.maximum(counts, 1)
+    pos_idx = [i for i, k in enumerate(lags) if k > 0]
+    neg_idx = [i for i, k in enumerate(lags) if k < 0]
+    if not pos_idx or not neg_idx:
+        return {"ratio": float("nan"), "pos_peak": 0.0, "neg_peak": 0.0, "pos_lag": 0, "neg_lag": 0}
+
+    pos_i = max(pos_idx, key=lambda i: abs(avg[i]))
+    neg_i = max(neg_idx, key=lambda i: abs(avg[i]))
+    pos_peak, neg_peak = abs(avg[pos_i]), abs(avg[neg_i])
+    ratio = neg_peak / max(pos_peak, 1e-10)
+
+    return {"ratio": ratio, "pos_peak": float(pos_peak), "neg_peak": float(neg_peak),
+            "pos_lag": lags[pos_i], "neg_lag": lags[neg_i]}
+
+
+def filter_reactive_variables(df: pd.DataFrame, target_variable: str, candidate_variables: list,
+                               max_lag: int = 10, reactive_threshold: float = 2.0) -> tuple:
+    """
+    CCF非対称性検定を候補変数リストに適用し、明確に"反応側"(閉ループ制御による交絡の疑いが強い)
+    と判定される変数を除外する。compute_forbidden_variables()のトポロジーフィルタと同じ位置づけの、
+    候補をLLMに見せる前のハードフィルタ。
+
+    reactive_threshold(既定2.0): 負のラグ側ピークが正のラグ側ピークの2倍以上あれば、
+    「ターゲットの変化に反応している」証拠が十分強いとみなし除外する。この閾値未満の
+    ratio(対称的〜弱い逆転)は、証拠として決定的とは言えないため除外せず残す
+    (実例: xmv_5のratio=7.71やxmeas_6のratio=4.20は除外対象だが、xmeas_20のratio=1.40は
+    曖昧なため除外しない)。
+
+    戻り値: (残った変数のリスト, 除外された変数とその診断結果のdict)
+    """
+    kept = []
+    excluded = {}
+    for var in candidate_variables:
+        if var not in df.columns:
+            kept.append(var)
+            continue
+        diag = compute_ccf_asymmetry(df, target_variable, var, max_lag=max_lag)
+        if not np.isnan(diag["ratio"]) and diag["ratio"] >= reactive_threshold:
+            excluded[var] = diag
+        else:
+            kept.append(var)
+    return kept, excluded
+
 
 def transform_to_difference(df: pd.DataFrame, target_variable: str) -> pd.DataFrame:
     """

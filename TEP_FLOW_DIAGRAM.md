@@ -1,7 +1,9 @@
 # TEP Plant Flow Diagram (Digital Twin & FDI Status)
 
 この図は、TEPの各プロセス変数に対するモデルベース異常検知（FDI）のための動的因果モデル構築の状況を示します。
-現在、過去の「異常に追従して隠蔽してしまう旧数式（自己回帰・下流圧力入りモデル）」は完全にクリアされ、質量バランス（アキュムレーション）に直接影響を与える特定の物理的異常に対して誤報ゼロ（0.00%）で確実に見抜く「堅牢な自己減衰型質量保存モデル（XMEAS 7）」に加え、Daltonの分圧法則に基づく質量スケーリング構造を持つ「分離器圧力モデル（XMEAS 13、R2=0.935）」が完成しました。その他の変数については新指針に基づく探索が継続中です。
+質量バランス（アキュムレーション）に直接影響を与える特定の物理的異常に対して誤報ゼロ（0.00%）で確実に見抜く「堅牢な自己減衰型質量保存モデル（XMEAS 7）」と、比例制御則を逆解きした「分離器液位モデル（XMEAS 12）」が完成しています。
+
+**⚠️ 重要な訂正（2026-09-08）**: 以前ここに「完成」として記載していた「Daltonの分圧法則に基づく分離器圧力モデル（XMEAS 13）」は、その後の検証（`xmeas_16`アブレーション、係数の符号・大きさの理論値照合、相互相関関数(CCF)による閉ループ制御交絡の検定）により**撤回されました**。詳細はセクション2を参照してください。現在は「LLM-GPに単一の物理法則を事前コミットさせ、フィット前に係数の符号を予言させ、事後に照合する」新しい検証プロトコル（Method A）のもとで再探索中です。XMEAS(9)・XMEAS(12)についても、この新プロトコルでの再監査はまだ実施していません。
 
 ```mermaid
 graph TD
@@ -15,13 +17,13 @@ graph TD
     Mixer --> |"Stream 6: Total Feed<br/>XMEAS(6): Feed Rate<br/>XMEAS(23-28): Composition (A-F)"| Reactor
 
     subgraph ReactorUnit [反応ユニット]
-        Reactor["Reactor (反応器)<br/>---<br/><b>[XMEAS 7] Reactor Pressure</b><br/>✅ 物理FDIモデル完成 (10H窓 R2=0.935 / 誤報 0%)<br/>Formula: dP = 0.285*x6 - 17.91*x10_lag1 - 0.025*x7_lag1 + 50.77<br/>---<br/><b>[XMEAS 9] Reactor Temperature</b><br/>🔍 物理ベースFDIモデル探索中<br/>---<br/>XMEAS(8): Reactor Level<br/>XMEAS(21): CW Outlet Temp<br/>XMV(10): CW Flow Valve<br/>XMV(12): Agitator Speed"]
+        Reactor["Reactor (反応器)<br/>---<br/><b>[XMEAS 7] Reactor Pressure</b><br/>✅ 物理FDIモデル完成 (10H窓 R2=0.935 / 誤報 0%)<br/>Formula: dP = 0.285*x6 - 17.91*x10_lag1 - 0.025*x7_lag1 + 50.77<br/>(Method A未監査)<br/>---<br/><b>[XMEAS 9] Reactor Temperature</b><br/>🔍 再検証中(旧式は撤回。トポロジー違反+CCF交絡の疑いを検出)<br/>---<br/>XMEAS(8): Reactor Level<br/>XMEAS(21): CW Outlet Temp<br/>XMV(10): CW Flow Valve<br/>XMV(12): Agitator Speed"]
     end
 
     Reactor --> |"Stream 7: Product & Unreacted Gas/Liquid"| Condenser
 
     subgraph CoolingUnit [冷却・分離ユニット]
-        Condenser["Condenser (凝縮器)<br/>XMEAS(22): CW Outlet Temp<br/>XMV(11): CW Flow Valve"] --> Separator["Separator (気液分離器)<br/>---<br/><b>[XMEAS 13] Separator Pressure</b><br/>✅ 物理FDIモデル完成 (R2=0.935)<br/>Formula: dP = c1*x11*x16/100 + c2*x16 - c3*x20*(1-xv5/100)^2*x16/100 + c4*(x31+x33+x35)*x16/100 - c5*x38*x16/100 + c6*x16*(xv5/100) + c7<br/>---<br/><b>[XMEAS 12] Separator Level</b><br/>🔍 物理ベースFDIモデル探索中<br/>---<br/>XMEAS(11): Separator Temp<br/>XMV(7): Underflow Valve"]
+        Condenser["Condenser (凝縮器)<br/>XMEAS(22): CW Outlet Temp<br/>XMV(11): CW Flow Valve"] --> Separator["Separator (気液分離器)<br/>---<br/><b>[XMEAS 13] Separator Pressure</b><br/>🔍 再検証中(旧式は撤回、Method Aで再探索中)<br/>---<br/><b>[XMEAS 12] Separator Level</b><br/>✅ 物理FDIモデル完成 (制御則逆解き, R2=0.9999999)<br/>Formula: XMEAS(12) = 37.05338 + 0.33981*XMV(7)<br/>(Method A未監査)<br/>---<br/>XMEAS(11): Separator Temp<br/>XMV(7): Underflow Valve"]
     end
 
     Separator --> |"Stream 8: Recycle Gas<br/>XMEAS(5): Recycle Flow"| Compressor["Compressor (コンプレッサー)<br/>XMEAS(20): Work<br/>XMV(5): Recycle Valve"]
@@ -32,17 +34,19 @@ graph TD
     Separator --> |"Stream 10: Liquid Feed<br/>XMEAS(14): Separator Underflow"| Stripper
 
     subgraph StrippingUnit [精製ユニット]
-        Stripper["Stripper (ストリッパー)<br/>---<br/>XMEAS(15): Stripper Level<br/>XMEAS(16): Stripper Pressure<br/>XMEAS(18): Stripper Temp<br/>XMV(9): Steam Valve"]
+        Stripper["Stripper (ストリッパー)<br/>---<br/><b>[XMEAS 15] Stripper Level</b><br/>✅ 制御則で完成 (R2=0.99999990)<br/>Formula: XMEAS(15) = 29.89273 + 0.43210*XMV(8)<br/>---<br/><b>[XMEAS 16] Stripper Pressure</b><br/>🟡 暫定候補 (エネルギー収支, R2=0.9211, 未フル監査)<br/>Formula: dXMEAS(16) = 0.0446*XMEAS(18) - 2.93<br/>---<br/><b>[XMEAS 18] Stripper Temperature</b><br/>✅ 物理FDIモデル完成 (弁特性, R2=0.9865, FAR=0%, F1=0.65)<br/>Formula: dXMEAS(18) = 4.154e-6*XMV(9)^2 - 0.0095<br/>---<br/>XMV(9): Steam Valve"]
         Steam[Steam] --> |"XMEAS(19): Steam Flow"| Stripper
     end
 
     Stripper --> |"Stream 5: Stripped Recycle"| Mixer
     Stripper --> |"Stream 11: Product<br/>XMEAS(17): Product Flow<br/>XMEAS(37-41): Composition (D-H)<br/>XMV(8): Product Valve"| Product[Final Product]
 
-    %% ステータスに応じた色分け (完成を緑、探索中をオレンジ点灯へ)
+    %% ステータスに応じた色分け (完成を緑、探索中/再検証中をオレンジへ)
+    %% SeparatorノードはXMEAS(12)完成・XMEAS(13)再検証中が混在するため、
+    %% 内部の未完成項目(XMEAS13)を優先してオレンジ表示している
     style Reactor fill:#d1fae5,stroke:#059669,stroke-width:2px
     style Separator fill:#fef3c7,stroke:#d97706,stroke-width:2px
-    style Stripper fill:#f3f4f6,stroke:#4b5563
+    style Stripper fill:#fef3c7,stroke:#d97706,stroke-width:2px
 ```
 
 ---
@@ -84,12 +88,27 @@ $$\Delta P(t) = 0.28497077 \cdot XMEAS(6) - 17.91088242 \cdot XMEAS(10)_{lag1} -
 
 ---
 
-### 2. 分離器圧力変化 $\Delta P_{separator}(t) = P_{separator}(t+1) - P_{separator}(t)$ (同定完了)
+### 2. 分離器圧力変化 $\Delta P_{separator}(t) = P_{separator}(t+1) - P_{separator}(t)$ (🔍 再検証中 — 旧式は撤回)
+
+#### ⚠️ 撤回の経緯（学術的誠実さのための記録）
+
+以下に記載する式は、2026-08-18時点で「同定完了」として報告されたが、その後の検証で**撤回**された。撤回理由を正直に記録する:
+
+1. **`xmeas_16`アブレーション検証**: 式の主要項をスケーリングしていた`XMEAS(16)`を全項から除去したところ、正常データR²はほぼ変化しなかった（0.9346→0.9308）。一方、IDV(6)の検知率は10.4%→96.4%に劇的改善した。これは`XMEAS(16)`が正常時の説明力にほとんど寄与しておらず、異常時にターゲットへ連動して検知を隠蔽する「相関の罠」を引き起こしていた直接的な証拠である。
+2. **係数の符号・大きさの理論値照合**: 残った項（`XMEAS(11)`分離器温度）の係数は、理想気体の状態方程式($\partial P/\partial T=P/T$)が予言する符号・大きさのいずれとも矛盾していた（生相関 r=-0.251、大きさの比 -0.37）。
+3. **単一法則コミット＋符号事前照合(Method A)によるLLM-GP再探索**: 質量収支の型に沿った式（`XMEAS(6)`, `XMEAS(10)`, `XMV(5)`, `XMEAS(20)`等の組み合わせ）を複数回試したが、いずれも全データでのOLS再フィット、または符号チェック実装自体の修正後の再照合で符号不整合が判明した。
+4. **相互相関関数(CCF)による閉ループ制御交絡の検定**: 差分系列でのCCF非対称性検定により、候補変数のうち`XMV(5)`（非対称性比7.71）と`XMEAS(6)`（同4.20）は、ターゲットの変化に"反応"している側である証拠が強く、独立した物理的driving forceとして扱うこと自体が誤りだった可能性が高いと判明した。
+
+**現状**: 上記の理由により、XMEAS(13)について物理的に妥当と主張できる式は現時点で存在しない。検証手法自体（Method A、符号・大きさ照合、CCF交絡検定）は`.kiro/steering/variable-modeling-methodology.md`に確立済みであり、今後の再探索はこの手法に基づいて行う。
+
+---
+
+#### 📜 撤回された旧式（履歴として保持、根拠として採用不可）
 
 #### 🧪 根拠の方程式（Daltonの分圧法則に基づく質量スケーリング）
 分離器気相部の圧力変化は、Daltonの分圧法則（各成分の分圧はその物質量分率と全圧の積に比例する: $p_i \propto x_i \cdot P$）およびエネルギー・質量収支に支配されます。LLM-GPは探索の過程で、温度・組成・圧縮機仕事の各項を単独のモル分率/仕事量として扱うのではなく、共存するストリッパー圧力 $XMEAS(16)$（分離器気相と熱力学的に連結した圧力プロキシ）との積として質量/分圧換算する構造を段階的に発見しました。
 
-#### 📝 同定された支配方程式（1-Step Ahead 予測式、正常データ全域でのOLS再同定）
+#### 📝 同定された支配方程式（1-Step Ahead 予測式、正常データ全域でのOLS再同定）— ⚠️撤回済み、参考記録
 $$\Delta P(t) = c_1 \cdot XMEAS(11)_{t-1}\frac{XMEAS(16)_{t-1}}{100} + c_2 \cdot XMEAS(16)_{t-1} - c_3 \cdot XMEAS(20)_{t-1}\left(1-\frac{XMV(5)_{t-1}}{100}\right)^2\frac{XMEAS(16)_{t-1}}{100}$$
 $$+ \, c_4 \cdot \left(XMEAS(31)_{t-1}+XMEAS(33)_{t-1}+XMEAS(35)_{t-1}\right)\frac{XMEAS(16)_{t-1}}{100} - c_5 \cdot XMEAS(38)_{t-1}\frac{XMEAS(16)_{t-1}}{100} + c_6 \cdot XMEAS(16)_{t-1}\frac{XMV(5)_{t-1}}{100} + c_7$$
 
@@ -102,7 +121,7 @@ $$+ \, c_4 \cdot \left(XMEAS(31)_{t-1}+XMEAS(33)_{t-1}+XMEAS(35)_{t-1}\right)\fr
 *   **ストリッパー圧力・バルブ結合項（$XMEAS(16)$, $XMEAS(16) \cdot XMV(5)/100$）**: 下流ストリッパーとの気相連結（背圧）と、リサイクルバルブ開度に依存するその結合強度。
 *   反応器圧力 $XMEAS(7)$ は全探索を通じて一貫して除外（相関の罠対策）。
 
-#### 📊 正常データ再現性とFDI評価結果（正常全域・異常全域 計約525万行）
+#### 📊 正常データ再現性とFDI評価結果（正常全域・異常全域 計約525万行）— ⚠️撤回済み、参考記録
 *   **正常再現度 $R^2$（1ステップ先予測、全データOLS再同定後）**: **0.9346（93.46%）**
 *   **検知閾値**: 正常時最大残差の1.25倍として **32.58 kPa** を設定。
 *   **故障別検知性能（FDR / 平均検知遅延ADD）**:
@@ -120,7 +139,7 @@ $$+ \, c_4 \cdot \left(XMEAS(31)_{t-1}+XMEAS(33)_{t-1}+XMEAS(35)_{t-1}\right)\fr
 | **9** | **58.00%** | 0分 | 19 | 96.40% | 0分 |
 | 10 | 0.00% | — | 20 | 0.00% | — |
 
-#### ⚠️ 本モデルの明確な物理限界と主張のスコープ（学術的誠実さ）
+#### ⚠️ 本モデルの明確な物理限界と主張のスコープ（学術的誠実さ）— ⚠️本モデル自体が撤回済み、参考記録
 本モデルはXMEAS(7)モデルと同様、質量収支・分圧バランスに特化した動的ツインであり、万能の検知ツールではありません。
 
 1.  **主張のスコープ制限**: 確実に検知できるのは、質量流入・流出バランスや分離器気相の分圧構成を直接破壊する異常（IDV 7, 18, 19, 9, 14, 13, 12）に限られます。IDV(2,4,5,8,10,15,16,20)は本モデルの検知対象外です。

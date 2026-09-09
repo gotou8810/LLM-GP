@@ -69,6 +69,18 @@ def check_sign_consistency(formula: str, coefficients: list, expected_signs: lis
     return f"{header}: " + "; ".join(details)
 
 
+def contains_target_variable(formula: str, target_variable: str) -> bool:
+    """
+    数式がターゲット変数自身を(トークン境界で)入力として含んでいるかを検出する。
+    プロンプト文中の「ターゲット自身を入力に使うな」という文言だけでは守られない実例
+    (xmeas_13をターゲットとする探索で、LLMが繰り返しxmeas_13自身を式に含めた)が
+    発生したため、機械的なハードチェックとして追加した。自己回帰項の使用は
+    CLAUDE.mdのTEP動的モデリング指針でも明確に禁止されている。
+    """
+    pattern = r'\b' + re.escape(target_variable) + r'\b'
+    return re.search(pattern, formula, re.IGNORECASE) is not None
+
+
 def check_ideal_gas_magnitude(coefficient: float, mean_pressure: float, mean_temperature_c: float) -> str:
     """
     Method A検証の追加層(符号だけでなく"大きさ"の妥当性): エネルギー収支/理想気体の
@@ -114,7 +126,8 @@ class EvolutionLoop:
         dataset_path: str,
         target_variable: str,
         mic_variables: list = None,
-        predict_diff: bool = True
+        predict_diff: bool = True,
+        reactive_exclusions: dict = None
     ):
         self.llm = llm_facade
         self.runner = julia_runner
@@ -125,6 +138,7 @@ class EvolutionLoop:
         self.target_variable = target_variable
         self.mic_variables = mic_variables or []
         self.predict_diff = predict_diff
+        self.reactive_exclusions = reactive_exclusions or {}
 
     def run(self):
         logger.info("Starting Evolutionary Loop...")
@@ -137,18 +151,42 @@ class EvolutionLoop:
             # 例として context_dict を丸ごと渡す
             try:
                 candidate = self.llm.generate_candidate(
-                    history=context["history"], 
-                    best_formula=context["best_formula"], 
+                    history=context["history"],
+                    best_formula=context["best_formula"],
                     best_fitness=context["best_fitness"],
                     target_variable=self.target_variable,
-                    mic_variables=self.mic_variables
+                    mic_variables=self.mic_variables,
+                    reactive_exclusions=self.reactive_exclusions
                 )
                 logger.info(f"Proposed Formula: {candidate.formula}")
                 logger.info(f"LLM Feedback: {candidate.feedback}")
             except Exception as e:
                 logger.error(f"Failed to generate candidate at generation {gen}: {e}")
                 continue # 次の世代へ（または終了処理）
-                
+
+            # 1.5. ターゲット自身を入力に使っていないか(自己回帰)をJulia評価の前に機械的チェックする。
+            # プロンプト文中の「ターゲット自身を使うな」という文言だけでは守られない実例が発生したため、
+            # ハードなゲートとして追加した(Julia評価すら行わず、次世代へ強いフィードバックとともに進む)。
+            if contains_target_variable(candidate.formula, self.target_variable):
+                logger.warning(
+                    f"REJECTED (self-reference): formula uses the target variable "
+                    f"'{self.target_variable}' as an input. Autoregressive terms are forbidden."
+                )
+                record = GenerationRecord(
+                    generation=gen,
+                    formula=candidate.formula,
+                    rmse=float('inf'),
+                    penalty=float('inf'),
+                    fitness=float('inf'),
+                    feedback=(f"{candidate.feedback}\n[REJECTED: formula uses the target variable "
+                              f"'{self.target_variable}' as an input - this is an autoregressive term "
+                              f"and is strictly forbidden. Do not use the target variable anywhere in "
+                              f"the formula, including inside nonlinear functions.]"),
+                    sign_valid=False
+                )
+                self.history.add_record(record)
+                continue
+
             # 2. Juliaで式を評価
             eval_result = self.runner.evaluate_formula(
                 formula=candidate.formula,

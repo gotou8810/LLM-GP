@@ -13,7 +13,7 @@ Your formula MUST predict this 1-step change Δy(t) based on the state variables
 CRITICAL RULES FOR FORMULA SYNTAX (Julia Language):
 1.  **Format**: Plain text formula on a single line. No backticks.
 2.  **Variables**: Use `xmeas_1` to `xmeas_41` and `xmv_1` to `xmv_11`.
-    - **IMPORTANT**: Your target variable is **{target_variable}** ({target_desc}). You MUST NOT use **{target_variable}** as an input in your formula.
+    - **IMPORTANT — HARD-ENFORCED, NOT A SUGGESTION**: Your target variable is **{target_variable}** ({target_desc}). You MUST NOT use **{target_variable}** anywhere as an input in your formula (including inside nonlinear functions like `exp()`/`sqrt()`, or multiplied with other terms) — this would be an autoregressive term, which is forbidden. This rule is checked mechanically before evaluation: any formula containing the target variable's own name is automatically rejected without being evaluated, wasting the generation.
     - **CRITICAL — CROSS-UNIT ACCUMULATION-STATE TRAP (Spurious Correlation Trap)**: The TEP process has three units with their own accumulation state variables (pressure/level/temperature): Reactor (`xmeas_7/8/9`), Separator (`xmeas_11/12/13`), and Stripper (`xmeas_15/16/18`). Because of the recycle loops, these three units are all dynamically coupled. If your target is one of these state variables, you MUST NOT use ANY state variable (pressure/level/temperature) belonging to one of the OTHER two units as an input — e.g. if your target is `xmeas_7` (Reactor Pressure), do not use `xmeas_13` (Separator Pressure) or `xmeas_16` (Stripper Pressure); if your target is `xmeas_13` (Separator Pressure), do not use `xmeas_7`/`xmeas_8`/`xmeas_9` (Reactor) or `xmeas_15`/`xmeas_16`/`xmeas_18` (Stripper). During an anomaly (e.g. a leak), a neighboring unit's state variable moves together with the target, so using it as a predictor makes the model track the anomaly instead of flagging it — defeating the purpose of the digital twin.
     - Instead, rely only on physical mass-balance inputs/outputs that cross unit boundaries as genuine flux (flow rates, valve positions, compressor work), such as `xmeas_6` (Reactor Feed Rate), `xmeas_10` (Purge Rate), or `xmv_6` (Purge Valve), along with their lags.
     - **CAUTION FOR COMPOSITION ANALYZER VARIABLES (xmeas_23 to xmeas_41)**: These are chromatograph-sampled mole % values (Reactor Feed / Purge Gas / Product analysis). In the real process they update only once per analyzer cycle (several minutes) and are held constant between samples, so they can look like they explain short-term dynamics through discretization/sampling-delay artifacts rather than genuine physical causality. If you use one of these, justify it via an explicit physical mechanism (e.g., partial-pressure contribution to a shared vapor space via Dalton's law) rather than purely because it is MIC-flagged as statistically informative.
@@ -40,6 +40,7 @@ Your response MUST declare, before the formula:
 The evaluation pipeline will independently check the fitted coefficients' actual signs against your declared expected_signs and report SIGN CHECK PASSED/FAILED in the next generation's history. A formula that fits well numerically but fails its own sign check has NOT validated its physical claim — treat repeated sign-check failures on the same law as evidence to switch to a different law category, not as something to explain away.
 
 {mic_variables_section}
+{reactive_exclusions_section}
 PHYSICAL INSTRUCTION:
 Please construct a formula using ONLY or primarily the MIC-selected high-relation variables listed above. Ensure the formula represents physical causality (such as mass/energy accumulation or fluid dynamics) rather than accidental feedback loop correlations.
 
@@ -194,5 +195,33 @@ class PromptManager:
             kwargs["mic_variables_section"] = f"CRITICAL INPUT VARIABLES (MIC-selected high relation):\n{mic_str}\n"
         else:
             kwargs["mic_variables_section"] = ""
-            
+
+        # Build reactive-exclusions section if provided (CCF asymmetry pre-filter results).
+        # This must be stated explicitly and by name - excluding a variable from the
+        # MIC-selected list alone is NOT enough, because the LLM can still reach for it
+        # from the general variable dictionary and construct a plausible-sounding
+        # alternative causal story to justify reusing it (observed in practice: xmv_5 was
+        # excluded from MIC candidates for xmeas_13 due to CCF ratio=7.71, but the LLM
+        # re-introduced it anyway by inventing an "anti-surge loop, not pressure-reactive"
+        # narrative that contradicted the actual measured evidence against THIS target).
+        reactive_exclusions = kwargs.get("reactive_exclusions", {})
+        if reactive_exclusions:
+            excl_str = "\n".join(
+                f"- {var}: CCF asymmetry ratio={info['ratio']:.2f} (its response lags the target more than it leads it)"
+                for var, info in reactive_exclusions.items()
+            )
+            kwargs["reactive_exclusions_section"] = (
+                "FORBIDDEN - LIKELY REACTIVE VARIABLES (closed-loop confounding, empirically tested against THIS target):\n"
+                f"{excl_str}\n"
+                "These variables were tested via cross-correlation asymmetry directly against your current target and show "
+                "the target's changes predict THEIR changes more than the other way around - i.e. they are more likely a "
+                "controller's response to the target than an independent driver of it. Do NOT use any of these variables "
+                "in your formula. This is a hard rule, not a suggestion: do not attempt to justify their inclusion with an "
+                "alternative causal story (e.g. \"it's controlled by a different loop\") - the CCF test was run against this "
+                "exact target, so any such story would contradict the measured evidence, not explain it away.\n"
+            )
+        else:
+            kwargs["reactive_exclusions_section"] = ""
+
+
         return self.system_prompt.format(**kwargs)
