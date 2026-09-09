@@ -52,6 +52,31 @@ using .NumericalEvaluator
             @test length(output_json["coefficients"]) >= 1
             @test haskey(output_json, "rmse")
             @test haskey(output_json, "penalty")
+
+            # ラグ変数構文 ("<var>_lag<K>") のテスト。
+            # プロンプトはLLMに xmeas_21_lag5 のような変数を使ってよいと伝えているが、
+            # 以前はCLI側にこれを解決する仕組みがなく、単純な未定義変数エラーで
+            # 評価が落ちていた(プロンプトの約束と実装の食い違い)。
+            lag_json = """
+            {
+              "formula": "c[1] * xmeas_1_lag5 + c[2]",
+              "target_variable": "xmeas_7",
+              "dataset_path": "$data_path",
+              "hyperparameters": {
+                "max_steps": 100,
+                "search_range": [-10.0, 10.0]
+              }
+            }
+            """
+            in_io_lag = IOBuffer(lag_json)
+            out_io_lag = IOBuffer()
+            NumericalEvaluator.main(in_io_lag, out_io_lag)
+            output_json_lag = JSON.parse(String(take!(out_io_lag)))
+            if output_json_lag["status"] == "error"
+                println("Lag CLI Error Message: ", output_json_lag["message"])
+            end
+            @test output_json_lag["status"] == "success"
+            @test length(output_json_lag["coefficients"]) >= 1
         else
             @warn "Local test data not found: $data_path. Skipping CLI Integration test."
         end
