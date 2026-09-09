@@ -163,3 +163,59 @@ def test_evolution_loop_appends_sign_check_to_feedback():
     loop.run()
 
     assert "SIGN CHECK FAILED" in hm.records[0].feedback
+
+
+def test_evolution_loop_warns_when_skill_score_near_naive_baseline():
+    mock_facade = MagicMock()
+    mock_facade.generate_candidate.return_value = StructuredResult(
+        formula="c[1]*x", feedback="test feedback", law="Energy balance", expected_signs=[1]
+    )
+
+    mock_runner = MagicMock()
+    # skill_scoreが0.05以下 -> 素朴な「変化なし」予想と大差ないという警告がfeedbackに追記されるはず
+    mock_runner.evaluate_formula.return_value = {
+        "status": "success", "fitness": 0.5, "rmse": 0.5, "penalty": 0.0, "coefficients": [1.0],
+        "naive_mae": 0.51, "skill_score": 0.02
+    }
+
+    hm = HistoryManager()
+    loop = EvolutionLoop(
+        llm_facade=mock_facade,
+        julia_runner=mock_runner,
+        history_manager=hm,
+        max_generations=1,
+        target_rmse=0.01,
+        dataset_path="dummy.RData",
+        target_variable="y"
+    )
+    loop.run()
+
+    assert "SKILL SCORE WARNING" in hm.records[0].feedback
+
+
+def test_evolution_loop_reports_skill_score_when_it_beats_naive_baseline():
+    mock_facade = MagicMock()
+    mock_facade.generate_candidate.return_value = StructuredResult(
+        formula="c[1]*x", feedback="test feedback", law="Energy balance", expected_signs=[1]
+    )
+
+    mock_runner = MagicMock()
+    mock_runner.evaluate_formula.return_value = {
+        "status": "success", "fitness": 0.5, "rmse": 0.3, "penalty": 0.0, "coefficients": [1.0],
+        "naive_mae": 0.5, "skill_score": 0.4
+    }
+
+    hm = HistoryManager()
+    loop = EvolutionLoop(
+        llm_facade=mock_facade,
+        julia_runner=mock_runner,
+        history_manager=hm,
+        max_generations=1,
+        target_rmse=0.01,
+        dataset_path="dummy.RData",
+        target_variable="y"
+    )
+    loop.run()
+
+    assert "SKILL SCORE: 0.4" in hm.records[0].feedback
+    assert "WARNING" not in hm.records[0].feedback

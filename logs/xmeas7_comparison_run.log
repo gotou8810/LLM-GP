@@ -1,0 +1,7 @@
+Loading dataset: TEP_FaultFree_Training.RData ...
+Loading dataset: TEP_Faulty_Training.RData ...
+係数 [xmeas_10(t-2), xmeas_7自己減衰(t-1), 切片]: [18.24992278707959, -0.02286556538839186, 55.702741766936306]
+FIT     : モデルMAE=1.5060 kPa  素朴MAE=1.5281 kPa  Skill=0.0145
+HOLDOUT : モデルMAE=1.5054 kPa  素朴MAE=1.5255 kPa  Skill=0.0132
+
+結果を xmeas7_comparison_viz.json に書き出しました。

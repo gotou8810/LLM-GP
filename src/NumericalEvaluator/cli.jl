@@ -189,12 +189,25 @@ function main(in_io::IO=stdin, out_io::IO=stdout)
         penalty = node_count * penalty_weight
         rmse = max(0.0, best_fitness - penalty)
 
+        # Skill Score: 「素朴予想(predict_diffモードなら変化なし=0、そうでなければ平均値)」
+        # と比べてどれだけ改善したかを示す相対指標。
+        # 2026-09-09発見: 対象変数の変動が乏しいと、素朴予想でも見かけ上のfitness/RMSEが
+        # 良く出てしまい(XMEAS(16)/(18)で実証)、この罠にGPループ自体が気づけないまま
+        # 世代を進めてしまう問題があった。同じ評価サンプル(target_sample)上で素朴予想の
+        # MAEも計算し、比率としてLLMへのフィードバックに含めることで、探索の最初から
+        # 「素朴予想と同水準の式」を機械的に低評価にする。
+        naive_pred = predict_diff ? zeros(length(target_sample)) : fill(mean(target_sample), length(target_sample))
+        naive_mae = mean(abs.(target_sample .- naive_pred))
+        skill_score = naive_mae > 1e-10 ? 1.0 - (rmse / naive_mae) : NaN
+
         response = Dict(
             "status" => "success",
             "fitness" => isnan(best_fitness) ? 1e18 : best_fitness,
             "rmse" => isnan(rmse) ? 1e18 : rmse,
             "penalty" => penalty,
-            "coefficients" => best_coeffs
+            "coefficients" => best_coeffs,
+            "naive_mae" => naive_mae,
+            "skill_score" => isnan(skill_score) ? nothing : skill_score
         )
         JSON.print(out_io, response)
 

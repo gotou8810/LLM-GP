@@ -210,7 +210,10 @@ class EvolutionLoop:
                 rmse = eval_result["rmse"]
                 fitness = eval_result["fitness"]
                 penalty = eval_result["penalty"]
-                logger.info(f"Evaluation Success - RMSE: {rmse:.4f}, Fitness: {fitness:.4f}")
+                skill_score = eval_result.get("skill_score")
+                naive_mae = eval_result.get("naive_mae")
+                skill_str = f", Skill: {skill_score:.4f}" if skill_score is not None else ""
+                logger.info(f"Evaluation Success - RMSE: {rmse:.4f}, Fitness: {fitness:.4f}{skill_str}")
 
                 sign_check = check_sign_consistency(candidate.formula, eval_result.get("coefficients", []), candidate.expected_signs)
                 feedback = candidate.feedback
@@ -218,6 +221,23 @@ class EvolutionLoop:
                 if sign_check:
                     logger.info(sign_check)
                     feedback = f"{candidate.feedback}\n[{sign_check}]"
+
+                # Skill Score(素朴予想=「変化なし」との比較): 2026-09-09発見。対象変数の
+                # 変動が乏しいと素朴予想でも低いRMSEが出てしまい、GPループがそれに気づかず
+                # 世代を進めてしまう罠があった(XMEAS16/18で実証済み)。フィードバックに
+                # 明示し、LLMが「良いRMSEだが素朴予想と大差ない」候補を自ら見直せるようにする。
+                if skill_score is not None:
+                    if skill_score <= 0.05:
+                        skill_note = (
+                            f"[SKILL SCORE WARNING: {skill_score:.4f} (naive 'no-change' baseline MAE={naive_mae:.4f}, "
+                            f"this formula's MAE={rmse:.4f}). A skill score near or below 0 means this formula is "
+                            f"essentially NO BETTER than predicting zero change - it may look like a good fit only "
+                            f"because this variable barely moves. This is NOT sufficient evidence of a real physical "
+                            f"relationship, even if RMSE/fitness look good and the sign check passes.]"
+                        )
+                    else:
+                        skill_note = f"[SKILL SCORE: {skill_score:.4f} (beats the naive 'no-change' baseline by this margin, naive MAE={naive_mae:.4f})]"
+                    feedback = f"{feedback}\n{skill_note}"
 
                 record = GenerationRecord(
                     generation=gen,
