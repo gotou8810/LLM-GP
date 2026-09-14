@@ -15,6 +15,15 @@ class GenerationRecord:
     feedback: str
     sign_valid: bool = True  # Method A符号チェック(loop.pyのcheck_sign_consistency)にFAILEDした記録はFalse。
     # 法則を宣言していない(自由記号回帰)場合はTrueのまま=中立扱い。
+    judge_verdict: str = "PASS"  # 独立した審判LLM(loop.pyのjudge_candidate呼び出し)の判定。
+    # "FLAG"は、提案側の説明文が渡された証拠(Skill Score・符号チェック結果等)と矛盾/過大主張
+    # していることを意味する。審判を呼んでいない場合は"PASS"のまま=中立扱い。
+    judge_reasoning: str = ""
+
+    @property
+    def is_trustworthy(self) -> bool:
+        """符号チェックと審判の両方に問題がない記録かどうか。ベスト記録選定に使う。"""
+        return self.sign_valid and self.judge_verdict != "FLAG"
 
 class HistoryManager:
     """
@@ -28,14 +37,15 @@ class HistoryManager:
     def add_record(self, record: GenerationRecord) -> None:
         self.records.append(record)
 
-        # ベスト更新: sign_valid(Method A符号チェック合格)を最優先し、
-        # 同じsign_valid同士でのみfitnessの小ささを比較する。
-        # 符号チェックに失敗した記録は、数値上のfitnessがどれだけ良くても
-        # sign_valid=Trueの記録がある限りベストにはしない(物理的に検証されていないため)。
+        # ベスト更新: is_trustworthy(符号チェック合格 かつ 審判がFLAGしていない)を最優先し、
+        # 同じis_trustworthy同士でのみfitnessの小ささを比較する。
+        # 符号チェックに失敗した記録、あるいは審判が「説明文が証拠と矛盾/過大主張」と
+        # 判定した記録は、数値上のfitnessがどれだけ良くても、is_trustworthy=Trueの記録が
+        # ある限りベストにはしない(物理的に検証されていないため)。
         if self.best_record is None:
             self.best_record = record
-        elif record.sign_valid != self.best_record.sign_valid:
-            if record.sign_valid:
+        elif record.is_trustworthy != self.best_record.is_trustworthy:
+            if record.is_trustworthy:
                 self.best_record = record
         elif record.fitness < self.best_record.fitness:
             self.best_record = record

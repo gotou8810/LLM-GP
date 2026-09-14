@@ -1,6 +1,6 @@
 import pytest
-from src.llm_interface.parser import ResponseParser
-from src.llm_interface.models import StructuredResult
+from src.llm_interface.parser import ResponseParser, JudgeResponseParser
+from src.llm_interface.models import StructuredResult, JudgeResult
 from src.llm_interface.exceptions import ParseError
 
 def test_parse_valid_json():
@@ -97,3 +97,34 @@ def test_parse_markers_unrecognized_sign_token_falls_back_to_empty():
     '''
     result = parser.parse(response)
     assert result.expected_signs == []
+
+
+def test_judge_parser_parses_pass_verdict():
+    parser = JudgeResponseParser()
+    response = '''
+    ---VERDICT---
+    PASS
+    ---REASONING---
+    The narrative accurately reflects the positive skill score and passing sign check.
+    '''
+    result = parser.parse(response)
+    assert isinstance(result, JudgeResult)
+    assert result.verdict == "PASS"
+    assert "skill score" in result.reasoning
+
+def test_judge_parser_parses_flag_verdict():
+    parser = JudgeResponseParser()
+    response = '''
+    ---VERDICT---
+    FLAG
+    ---REASONING---
+    Skill score is 0.01 but the narrative claims a proven strong relationship.
+    '''
+    result = parser.parse(response)
+    assert result.verdict == "FLAG"
+    assert "0.01" in result.reasoning
+
+def test_judge_parser_defaults_to_flag_when_unparseable():
+    parser = JudgeResponseParser()
+    result = parser.parse("I refuse to answer in the requested format.")
+    assert result.verdict == "FLAG"

@@ -3,7 +3,7 @@
 import json
 import re
 from pydantic import ValidationError
-from .models import StructuredResult
+from .models import StructuredResult, JudgeResult
 from .exceptions import ParseError
 
 def _parse_expected_signs(raw: str) -> list:
@@ -65,3 +65,22 @@ class ResponseParser:
             return StructuredResult(**data)
         except (json.JSONDecodeError, ValidationError) as e:
             raise ParseError(f"Failed to parse response as JSON or markers: {e}") from e
+
+
+class JudgeResponseParser:
+    """
+    審判LLMの応答(---VERDICT---/---REASONING---形式)をJudgeResultへパースする。
+    パースに失敗した場合は、審判が機能しなかったことを隠さず"FLAG"側に倒す
+    (審判自体が信頼できない応答を返した以上、無条件でPASS扱いにはしない)。
+    """
+    def parse(self, text: str) -> JudgeResult:
+        verdict_match = re.search(r"---VERDICT---\s*(.*?)\s*(?=---REASONING---|$)", text, re.DOTALL)
+        reasoning_match = re.search(r"---REASONING---\s*(.*)", text, re.DOTALL)
+
+        if verdict_match:
+            verdict_raw = verdict_match.group(1).strip().upper()
+            verdict = "PASS" if "PASS" in verdict_raw and "FLAG" not in verdict_raw else "FLAG"
+            reasoning = reasoning_match.group(1).strip() if reasoning_match else ""
+            return JudgeResult(verdict=verdict, reasoning=reasoning)
+
+        return JudgeResult(verdict="FLAG", reasoning=f"Judge response could not be parsed: {text[:200]!r}")

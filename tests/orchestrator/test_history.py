@@ -62,6 +62,27 @@ def test_history_manager_falls_back_to_best_fitness_when_none_sign_valid():
     hm.add_record(r2)
     assert hm.get_best_record() == r2
 
+def test_history_manager_prefers_non_flagged_over_lower_fitness():
+    # 審判LLMがFLAGした記録(説明文が証拠と矛盾/過大主張)は、数値上fitnessが良くても
+    # ベストにしない(sign_validと同じ優先ロジック)
+    hm = HistoryManager()
+
+    passed_record = GenerationRecord(
+        generation=1, formula="c[1]*xmeas_10 - c[2]*xmeas_7", rmse=0.30, penalty=0.0,
+        fitness=0.30, feedback="skill score positive, judge passed", sign_valid=True, judge_verdict="PASS"
+    )
+    hm.add_record(passed_record)
+    assert hm.get_best_record() == passed_record
+
+    flagged_but_better_fitness = GenerationRecord(
+        generation=2, formula="c[1]*xmeas_16", rmse=0.10, penalty=0.0,
+        fitness=0.10, feedback="claims strong grounding despite skill score 0.01",
+        sign_valid=True, judge_verdict="FLAG", judge_reasoning="narrative overstates near-zero skill score"
+    )
+    hm.add_record(flagged_but_better_fitness)
+    # ベストはPASSした記録のまま(数値上劣っていても)
+    assert hm.get_best_record() == passed_record
+
 def test_history_manager_context():
     hm = HistoryManager()
     record = GenerationRecord(generation=1, formula="c[1]*X", rmse=10.5, penalty=0.0, fitness=10.5, feedback="init")

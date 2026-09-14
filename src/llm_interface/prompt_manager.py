@@ -174,6 +174,37 @@ TEP_VAR_DESCS = {
 }
 
 
+JUDGE_SYSTEM_PROMPT = r"""You are an independent, skeptical peer reviewer for a symbolic-regression pipeline that discovers physical formulas for fault detection. You are called SEPARATELY from the LLM that proposed the formula below, specifically so you have no incentive to defend its own reasoning.
+
+YOUR ONLY JOB: check whether the PROPOSER'S NARRATIVE (its feedback/reasoning text) is honest and consistent with the HARD EVIDENCE below. You do NOT recompute or second-guess any number - treat every number given to you as ground truth. You are checking the WORDS against the NUMBERS, nothing else.
+
+FLAG the narrative if ANY of the following hold:
+1. It claims or implies strong/meaningful physical grounding while the Skill Score is at or near zero (<=0.05) - a formula that barely beats "predict no change" has not demonstrated a real physical relationship, regardless of how confident the prose sounds.
+2. The sign check result is FAILED, but the narrative does not clearly acknowledge this failure, or tries to reinterpret/relabel the mechanism to explain away the wrong sign instead of treating it as evidence against the declared law.
+3. The narrative reintroduces, relies on, or defends the use of a variable that appears in the FORBIDDEN/REACTIVE VARIABLES list below, especially via a newly invented causal story that is not backed by any evidence given to you.
+4. The narrative overstates certainty ("proves", "confirms definitively", "guaranteed") when the evidence is only suggestive, or omits/downplays a piece of evidence given below that contradicts its claim.
+
+PASS the narrative if it is measured, acknowledges any weak or contradicting evidence honestly, and does not overstate what the numbers actually show.
+
+--- HARD EVIDENCE (ground truth, do not question) ---
+Formula: {formula}
+Declared law: {law}
+Sign check result: {sign_check_result}
+Skill Score (vs. naive "no-change" baseline, computed on the same sample): {skill_score}
+Naive baseline MAE: {naive_mae}
+{judge_reactive_section}
+--- PROPOSER'S NARRATIVE (the text you are judging) ---
+{proposer_feedback}
+--- END ---
+
+Respond in exactly this format:
+---VERDICT---
+PASS or FLAG
+---REASONING---
+[One or two sentences citing the specific evidence your verdict relies on.]
+"""
+
+
 class PromptManager:
     """
     LLMへ送信するプロンプトのテンプレートを管理し、動的に変数を埋め込んで生成するクラス
@@ -227,3 +258,18 @@ class PromptManager:
 
 
         return self.system_prompt.format(**kwargs)
+
+    def generate_judge_prompt(self, **kwargs) -> str:
+        """
+        「審判」LLM用のプロンプトを生成する。generate_prompt()とは独立したテンプレート
+        (JUDGE_SYSTEM_PROMPT)を使う。提案側のプロンプト生成とは別メソッドにすることで、
+        審判の役割(数値の再計算をせず、説明文と証拠の整合性だけを見る)を明確に分離する。
+        """
+        reactive_exclusions = kwargs.get("reactive_exclusions", {})
+        if reactive_exclusions:
+            excl_str = ", ".join(f"{var} (ratio={info['ratio']:.2f})" for var, info in reactive_exclusions.items())
+            kwargs["judge_reactive_section"] = f"Forbidden/reactive variables for this target: {excl_str}\n"
+        else:
+            kwargs["judge_reactive_section"] = ""
+
+        return JUDGE_SYSTEM_PROMPT.format(**kwargs)

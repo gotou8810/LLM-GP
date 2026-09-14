@@ -45,3 +45,33 @@ def test_reactive_exclusions_section_empty_when_not_provided():
         best_fitness="(none)",
     )
     assert "FORBIDDEN - LIKELY REACTIVE VARIABLES" not in prompt
+
+def test_generate_judge_prompt_includes_hard_evidence_and_narrative():
+    pm = PromptManager()
+    prompt = pm.generate_judge_prompt(
+        formula="c[1]*xmeas_10 - c[2]*xmeas_7",
+        law="Mass balance",
+        sign_check_result="SIGN CHECK PASSED",
+        skill_score="0.0132",
+        naive_mae="1.5255",
+        proposer_feedback="This confirms a robust physical mechanism.",
+        reactive_exclusions={},
+    )
+    assert "c[1]*xmeas_10 - c[2]*xmeas_7" in prompt
+    assert "0.0132" in prompt
+    assert "This confirms a robust physical mechanism." in prompt
+    assert "---VERDICT---" in prompt
+
+def test_generate_judge_prompt_includes_reactive_section_when_provided():
+    pm = PromptManager()
+    prompt = pm.generate_judge_prompt(
+        formula="c[1]*xmv_5",
+        law="Mass balance",
+        sign_check_result="SIGN CHECK PASSED",
+        skill_score="0.10",
+        naive_mae="1.0",
+        proposer_feedback="xmv_5 is safe to use here.",
+        reactive_exclusions={"xmv_5": {"ratio": 7.71}},
+    )
+    assert "xmv_5" in prompt
+    assert "7.71" in prompt

@@ -2,7 +2,7 @@ import pytest
 from unittest.mock import MagicMock
 from src.orchestrator.loop import EvolutionLoop, check_sign_consistency, check_ideal_gas_magnitude, contains_target_variable
 from src.orchestrator.history import HistoryManager
-from src.llm_interface.models import StructuredResult
+from src.llm_interface.models import StructuredResult, JudgeResult
 
 def test_evolution_loop():
     mock_facade = MagicMock()
@@ -219,3 +219,94 @@ def test_evolution_loop_reports_skill_score_when_it_beats_naive_baseline():
 
     assert "SKILL SCORE: 0.4" in hm.records[0].feedback
     assert "WARNING" not in hm.records[0].feedback
+
+
+def test_evolution_loop_records_judge_flag_in_feedback_and_record():
+    mock_facade = MagicMock()
+    mock_facade.generate_candidate.return_value = StructuredResult(
+        formula="c[1]*x", feedback="this proves a strong physical relationship", law="Energy balance", expected_signs=[1]
+    )
+    mock_facade.judge_candidate.return_value = JudgeResult(
+        verdict="FLAG", reasoning="Skill score is 0.01 but the narrative claims a proven strong relationship."
+    )
+
+    mock_runner = MagicMock()
+    mock_runner.evaluate_formula.return_value = {
+        "status": "success", "fitness": 0.3, "rmse": 0.3, "penalty": 0.0, "coefficients": [1.0],
+        "naive_mae": 0.31, "skill_score": 0.03
+    }
+
+    hm = HistoryManager()
+    loop = EvolutionLoop(
+        llm_facade=mock_facade,
+        julia_runner=mock_runner,
+        history_manager=hm,
+        max_generations=1,
+        target_rmse=0.01,
+        dataset_path="dummy.RData",
+        target_variable="y"
+    )
+    loop.run()
+
+    assert mock_facade.judge_candidate.called
+    assert hm.records[0].judge_verdict == "FLAG"
+    assert "JUDGE FLAG" in hm.records[0].feedback
+
+
+def test_evolution_loop_judge_pass_does_not_flag_record():
+    mock_facade = MagicMock()
+    mock_facade.generate_candidate.return_value = StructuredResult(
+        formula="c[1]*x", feedback="modest improvement, weak but non-zero skill", law="Energy balance", expected_signs=[1]
+    )
+    mock_facade.judge_candidate.return_value = JudgeResult(verdict="PASS", reasoning="Narrative matches the evidence.")
+
+    mock_runner = MagicMock()
+    mock_runner.evaluate_formula.return_value = {
+        "status": "success", "fitness": 0.3, "rmse": 0.3, "penalty": 0.0, "coefficients": [1.0],
+        "naive_mae": 0.5, "skill_score": 0.4
+    }
+
+    hm = HistoryManager()
+    loop = EvolutionLoop(
+        llm_facade=mock_facade,
+        julia_runner=mock_runner,
+        history_manager=hm,
+        max_generations=1,
+        target_rmse=0.01,
+        dataset_path="dummy.RData",
+        target_variable="y"
+    )
+    loop.run()
+
+    assert hm.records[0].judge_verdict == "PASS"
+    assert "JUDGE FLAG" not in hm.records[0].feedback
+
+
+def test_evolution_loop_judge_failure_defaults_to_neutral_pass():
+    # 審判呼び出し自体が失敗(通信エラー等)しても、ループ全体は止まらず、
+    # その世代はPASS扱い(中立)として続行する
+    mock_facade = MagicMock()
+    mock_facade.generate_candidate.return_value = StructuredResult(
+        formula="c[1]*x", feedback="test feedback", law="Energy balance", expected_signs=[1]
+    )
+    mock_facade.judge_candidate.side_effect = RuntimeError("API unavailable")
+
+    mock_runner = MagicMock()
+    mock_runner.evaluate_formula.return_value = {
+        "status": "success", "fitness": 0.3, "rmse": 0.3, "penalty": 0.0, "coefficients": [1.0],
+        "naive_mae": 0.5, "skill_score": 0.4
+    }
+
+    hm = HistoryManager()
+    loop = EvolutionLoop(
+        llm_facade=mock_facade,
+        julia_runner=mock_runner,
+        history_manager=hm,
+        max_generations=1,
+        target_rmse=0.01,
+        dataset_path="dummy.RData",
+        target_variable="y"
+    )
+    loop.run()
+
+    assert hm.records[0].judge_verdict == "PASS"

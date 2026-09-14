@@ -239,6 +239,32 @@ class EvolutionLoop:
                         skill_note = f"[SKILL SCORE: {skill_score:.4f} (beats the naive 'no-change' baseline by this margin, naive MAE={naive_mae:.4f})]"
                     feedback = f"{feedback}\n{skill_note}"
 
+                # 5. 独立した審判LLMによる説明文の整合性チェック。提案側とは別のLLM呼び出しで、
+                # 数値の再計算はさせず、提案側のfeedback(説明文)が確定済みの証拠(Skill Score・
+                # 符号チェック結果)と矛盾/過大主張していないかだけを判定させる(自作自演の
+                # ストーリーテリング対策)。
+                judge_verdict = "PASS"
+                judge_reasoning = ""
+                try:
+                    judge_result = self.llm.judge_candidate(
+                        formula=candidate.formula,
+                        law=candidate.law or "(none declared)",
+                        sign_check_result=sign_check or "(no expected signs declared, sign check skipped)",
+                        skill_score=f"{skill_score:.4f}" if skill_score is not None else "N/A",
+                        naive_mae=f"{naive_mae:.4f}" if naive_mae is not None else "N/A",
+                        proposer_feedback=candidate.feedback,
+                        reactive_exclusions=self.reactive_exclusions
+                    )
+                    judge_verdict = judge_result.verdict
+                    judge_reasoning = judge_result.reasoning
+                    if judge_verdict == "FLAG":
+                        logger.warning(f"JUDGE FLAGGED: {judge_reasoning}")
+                        feedback = f"{feedback}\n[JUDGE FLAG: {judge_reasoning}]"
+                    else:
+                        logger.info(f"Judge: PASS - {judge_reasoning}")
+                except Exception as e:
+                    logger.warning(f"Judge call failed, treating as neutral PASS for this generation: {e}")
+
                 record = GenerationRecord(
                     generation=gen,
                     formula=candidate.formula,
@@ -246,7 +272,9 @@ class EvolutionLoop:
                     penalty=penalty,
                     fitness=fitness,
                     feedback=feedback,
-                    sign_valid=sign_valid
+                    sign_valid=sign_valid,
+                    judge_verdict=judge_verdict,
+                    judge_reasoning=judge_reasoning
                 )
 
             # 3. 履歴に記録
