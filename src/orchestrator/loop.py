@@ -72,12 +72,22 @@ def check_sign_consistency(formula: str, coefficients: list, expected_signs: lis
 def contains_target_variable(formula: str, target_variable: str) -> bool:
     """
     数式がターゲット変数自身を(トークン境界で)入力として含んでいるかを検出する。
+    裸の同時刻参照(xmeas_7)だけでなく、ラグ付きの自己参照(xmeas_7_lag1等)も検出する。
+
     プロンプト文中の「ターゲット自身を入力に使うな」という文言だけでは守られない実例
     (xmeas_13をターゲットとする探索で、LLMが繰り返しxmeas_13自身を式に含めた)が
-    発生したため、機械的なハードチェックとして追加した。自己回帰項の使用は
-    CLAUDE.mdのTEP動的モデリング指針でも明確に禁止されている。
+    発生したため、機械的なハードチェックとして追加した。
+
+    2026-09-15発見: CLAUDE.mdのTEP動的モデリング指針は「自身の過去値である自己回帰項
+    (XMEAS(7)_lag等)は使用を一切禁止する」と明記しているにもかかわらず、本関数は
+    当初「裸の同時刻参照」しか検出しておらず、"xmeas_7_lag1"のようなラグ付き自己参照は
+    素通りしていた(単語境界\bは"7"と"_"の間では成立しないため)。この抜け穴により、
+    XMEAS(7)の「完成」式が自己減衰項として`xmeas_7_lag1`を使い続けていたことが
+    判明した。CLAUDE.mdはこの自己回帰項を「一切禁止」と明記しており、自己減衰項という
+    名目の例外は認めていない — 異常発生時に実測値の変化に予測値が追従し、検知を隠蔽する
+    (「相関の罠」)ため。
     """
-    pattern = r'\b' + re.escape(target_variable) + r'\b'
+    pattern = r'\b' + re.escape(target_variable) + r'(?:_lag\d+)?\b'
     return re.search(pattern, formula, re.IGNORECASE) is not None
 
 

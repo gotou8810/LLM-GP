@@ -85,6 +85,19 @@ def test_contains_target_variable_does_not_false_positive_on_prefix_match():
     assert contains_target_variable("c[1]*xmeas_1", "xmeas_13") is False
     assert contains_target_variable("c[1]*xmeas_130", "xmeas_13") is False
 
+def test_contains_target_variable_detects_lagged_self_reference():
+    # 2026-09-15発見: CLAUDE.mdは「自身の過去値である自己回帰項(XMEAS(7)_lag等)は
+    # 使用を一切禁止する」と明記しているが、以前はラグ付きの自己参照(xmeas_7_lag1)を
+    # 検出できていなかった(裸の同時刻参照xmeas_7しか見ていなかったため)。
+    assert contains_target_variable("c[1]*xmeas_10 - c[2]*xmeas_7_lag1 + c[3]", "xmeas_7") is True
+    assert contains_target_variable("c[1]*xmeas_9_lag5", "xmeas_9") is True
+
+def test_contains_target_variable_lagged_self_reference_does_not_false_positive_on_prefix():
+    # xmeas_7を対象とする時、xmeas_70_lag1やxmeas_79のような無関係な変数を
+    # 誤って自己参照と判定してはいけない
+    assert contains_target_variable("c[1]*xmeas_79", "xmeas_7") is False
+    assert contains_target_variable("c[1]*xmeas_70_lag1", "xmeas_7") is False
+
 def test_evolution_loop_rejects_self_referential_formula_without_calling_julia():
     mock_facade = MagicMock()
     mock_facade.generate_candidate.return_value = StructuredResult(
