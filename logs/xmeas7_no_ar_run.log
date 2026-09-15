@@ -1,0 +1,36 @@
+Loading dataset: TEP_FaultFree_Training.RData ...
+Loading dataset: TEP_Faulty_Training.RData ...
+係数 [xmeas_10(t-2), 切片](自己減衰項なし): [21.99711695102674, -7.412602475211624]
+差分スケールR²(FIT): 0.020708586395579487
+
+FIT     : モデルMAE=1.5120  素朴スケール(FIT固定)=1.5281  MASE=0.9895  Skill=0.0105
+HOLDOUT : モデルMAE=1.5112  (参考:HOLDOUT自身の素朴MAE=1.5255)  MASE(FITスケール基準)=0.9889  Skill=0.0111
+
+FDI検知しきい値: 11.0396
+FAR: 0.00% (0/100 runs)
+
+--- IDVごとのFDR ---
+  IDV( 1) | FDR=  4.20% | ADD=40.7
+  IDV( 2) | FDR=100.00% | ADD=100.0
+  IDV( 3) | FDR=  0.00% | ADD=N/A
+  IDV( 4) | FDR=  0.00% | ADD=N/A
+  IDV( 5) | FDR=  0.60% | ADD=20.3
+  IDV( 6) | FDR= 34.80% | ADD=128.5
+  IDV( 7) | FDR=100.00% | ADD=20.0
+  IDV( 8) | FDR= 80.80% | ADD=251.2
+  IDV( 9) | FDR=  0.00% | ADD=N/A
+  IDV(10) | FDR=  0.00% | ADD=N/A
+  IDV(11) | FDR=  0.00% | ADD=N/A
+  IDV(12) | FDR=100.00% | ADD=43.1
+  IDV(13) | FDR= 85.80% | ADD=204.4
+  IDV(14) | FDR=  0.60% | ADD=212.0
+  IDV(15) | FDR=  0.00% | ADD=N/A
+  IDV(16) | FDR=  0.00% | ADD=N/A
+  IDV(17) | FDR=  1.40% | ADD=281.6
+  IDV(18) | FDR=100.00% | ADD=120.1
+  IDV(19) | FDR=  0.80% | ADD=140.8
+  IDV(20) | FDR=100.00% | ADD=88.3
+
+TP=3545 FN=6455 FP=0 TN=100  Precision=1.0000 Recall=0.3545 F1=0.5234 FAR=0.00%
+
+結果を xmeas7_no_ar_results.json に書き出しました。
