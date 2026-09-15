@@ -22,7 +22,7 @@ graph TD
     Reactor --> |"Stream 7: Product & Unreacted Gas/Liquid"| Condenser
 
     subgraph CoolingUnit [冷却・分離ユニット]
-        Condenser["Condenser (凝縮器)<br/>XMEAS(22): CW Outlet Temp<br/>XMV(11): CW Flow Valve"] --> Separator["Separator (気液分離器)<br/>---<br/><b>[XMEAS 13] Separator Pressure</b><br/>🔍 再検証中(旧式は撤回、Method Aで再探索中)<br/>---<br/><b>[XMEAS 12] Separator Level</b><br/>🔍 制御則式はあるが未検証(Δy定式化ルール違反+持続性ベースライン比較未実施)<br/>Formula(未検証): XMEAS(12) = 37.05338 + 0.33981*XMV(7)<br/>---<br/>XMEAS(11): Separator Temp<br/>XMV(7): Underflow Valve"]
+        Condenser["Condenser (凝縮器)<br/>XMEAS(22): CW Outlet Temp<br/>XMV(11): CW Flow Valve"] --> Separator["Separator (気液分離器)<br/>---<br/><b>[XMEAS 13] Separator Pressure</b><br/>🔍 再検証中(旧式は撤回、Method Aで再探索中)<br/>---<br/><b>[XMEAS 12] Separator Level</b><br/>⏸️ 検知対象外(動的ツイン不成立、下記参照)<br/>---<br/>XMEAS(11): Separator Temp<br/>XMV(7): Underflow Valve"]
     end
 
     Separator --> |"Stream 8: Recycle Gas<br/>XMEAS(5): Recycle Flow"| Compressor["Compressor (コンプレッサー)<br/>XMEAS(20): Work<br/>XMV(5): Recycle Valve"]
@@ -33,7 +33,7 @@ graph TD
     Separator --> |"Stream 10: Liquid Feed<br/>XMEAS(14): Separator Underflow"| Stripper
 
     subgraph StrippingUnit [精製ユニット]
-        Stripper["Stripper (ストリッパー)<br/>---<br/><b>[XMEAS 15] Stripper Level</b><br/>🔍 制御則式はあるが未検証(Δy定式化ルール違反+持続性ベースライン比較未実施)<br/>Formula(未検証): XMEAS(15) = 29.89273 + 0.43210*XMV(8)<br/>---<br/><b>[XMEAS 16] Stripper Pressure</b><br/>❌ 検知性能上の価値なし(素朴予想同等以下、撤回)<br/>---<br/><b>[XMEAS 18] Stripper Temperature</b><br/>❌ 検知性能上の価値なし(素朴予想同等以下、撤回)<br/>---<br/>XMV(9): Steam Valve"]
+        Stripper["Stripper (ストリッパー)<br/>---<br/><b>[XMEAS 15] Stripper Level</b><br/>⏸️ 検知対象外(動的ツイン不成立、下記参照)<br/>---<br/><b>[XMEAS 16] Stripper Pressure</b><br/>❌ 検知性能上の価値なし(素朴予想同等以下、撤回)<br/>---<br/><b>[XMEAS 18] Stripper Temperature</b><br/>❌ 検知性能上の価値なし(素朴予想同等以下、撤回)<br/>---<br/>XMV(9): Steam Valve"]
         Steam[Steam] --> |"XMEAS(19): Steam Flow"| Stripper
     end
 
@@ -42,8 +42,8 @@ graph TD
 
     %% ステータスに応じた色分け (実証済み完成=緑、未検証/再検証中=オレンジ、価値なしと判明=グレー)
     %% ReactorはXMEAS(7)実証済み・XMEAS(9)保留中が混在するが、実証済み項目を主として緑表示。
-    %% SeparatorはXMEAS(12)/(13)とも未検証・再検証中のためオレンジ。
-    %% StripperはXMEAS(16)/(18)が価値なしと判明・XMEAS(15)も未検証のためグレー。
+    %% SeparatorはXMEAS(13)が再検証中・XMEAS(12)が検知対象外のためオレンジ。
+    %% StripperはXMEAS(16)/(18)が価値なしと判明・XMEAS(15)も検知対象外のためグレー。
     style Reactor fill:#d1fae5,stroke:#059669,stroke-width:2px
     style Separator fill:#fef3c7,stroke:#d97706,stroke-width:2px
     style Stripper fill:#e5e7eb,stroke:#6b7280,stroke-width:2px
@@ -79,7 +79,8 @@ $$\Delta P(t) = 21.99712 \cdot XMEAS(10)_{lag1} - 7.41260$$
 *   **MASE**（Hyndman & Koehler 2006の定義、素朴予想のスケールはFITデータで固定）: **0.9895(FIT) / 0.9889(HOLDOUT)**
 *   **Skill Score**（$1-\text{MASE}$）: **0.0105(FIT) / 0.0111(HOLDOUT)** — 自己回帰項あり(0.0145/0.0132)よりわずかに小さいが、依然明確に正
 *   **誤検知率 (FAR)**: **0.00%**
-*   **故障検知率 (F1)**: **0.5234**（素朴予想単独のF1=0.4673を上回る。自己回帰項ありの0.5624より低下したが、CLAUDE.md準拠の式でも「XMEAS(7)は価値がある」という結論は維持される）
+*   **故障検知率 (F1、全20 IDV対象)**: **0.5234**（素朴予想単独のF1=0.4673を上回る。自己回帰項ありの0.5624より低下したが、CLAUDE.md準拠の式でも「XMEAS(7)は価値がある」という結論は維持される）
+*   **⚠️F1の解釈上の注意**: Precision=1.0(誤報ゼロ)に対しRecall=0.35と低いため、F1=0.52は低く見えるが、これは**FDR 5%未満の12種類の「検知対象外」の異常を含めて計算しているため**であり、この式の欠陥ではない。**FDR 30%超の8種類(IDV 2,6,7,8,12,13,18,20、この式が担当すべき質量収支関連の異常)に限定するとRecall=0.877、F1≈0.93**に達する。本プロジェクトはセンサーごとに独立した式を用意し発火パターンで原因を特定する設計であり、1つの式が全20種類を検知する必要はそもそもない。
 
 #### 📋 IDVごとのFDR（検知率、自己回帰項なしの式）
 
@@ -162,3 +163,41 @@ $$+ \, c_4 \cdot \left(XMEAS(31)_{t-1}+XMEAS(33)_{t-1}+XMEAS(35)_{t-1}\right)\fr
 2.  **難検知故障**: IDV(3), IDV(11), IDV(17)はXMEAS(7)モデルと同様、検知率1%未満に留まり、本モデルでは実質的に検知不可能です。
 3.  **パージ・製品組成変数の限界**: $XMEAS(31), XMEAS(33), XMEAS(35), XMEAS(38)$はクロマトグラフ分析値であり、実プロセスでは数分間隔の離散サンプリング（分析周期）を伴います。本検証はTEPデータセット上の値をそのまま使用しており、実プラント適用時はこの分析遅延を別途考慮する必要があります。
 4.  **係数符号の解釈上の注意**: 上記係数はLLM-GPが正規化・サンプリングデータ上で発見した式構造を、正常データ全域・実単位でOLS再同定したものです。式の**構造**（どの変数をどう組み合わせるか）はLLM-GPの探索結果を採用していますが、多重共線性のある回帰変数を含むため、個々の係数の符号を独立した物理的意味として過度に解釈すべきではありません。
+
+---
+
+### 3. 分離器液位 XMEAS(12) ・ ストリッパー液位 XMEAS(15) （⏸️ 検知対象外、2026-09-15判定）
+
+#### ⚠️ 静的制御則式は動的デジタルツインの要件を満たさない
+
+両変数はいずれも、抜き出しバルブ（XMEAS(12)はXMV(7)、XMEAS(15)はXMV(8)）との相関が$r\approx0.9999995$という、ほぼ完全な静的関係にあり、制御則を逆解きした式（$XMEAS(12)=37.05+0.34 \cdot XMV(7)$、$XMEAS(15)=29.89+0.43 \cdot XMV(8)$）で$R^2\approx0.9999999$を達成できます。しかし、CLAUDE.mdのTEP Dynamic Modeling Guidelinesは予測対象を1ステップ変化量$\Delta y$とすることを明記しており、静的な釣り合い関係のみで満足することを明確に禁止しています。この2式は当初「完成」としていましたが、この規則に反していました。
+
+#### 🧪 Δy形式での再定式化を試み、失敗した経緯
+
+質量収支則（$dLevel/dt \propto F_{in}-F_{out}$）に基づく動的な式を再構築するため、境界を横切る独立したフロー変数（流入・流出候補）と、液位変化量$\Delta y(t)$との相関を総当たりで調べました。
+
+**XMEAS(12)（分離器液位）**:
+
+| 候補変数 | $\Delta y$との相関 |
+|---|:-:|
+| XMEAS(6) 反応器フィード | -0.0008 |
+| XMEAS(5) リサイクル流量 | -0.0010 |
+| XMEAS(14) 分離器液抜き流量 | -0.0090 |
+| XMEAS(20) 圧縮機仕事 | -0.0009 |
+| XMV(7) 抜き出し弁（操作変数） | **-0.7072** |
+
+**XMEAS(15)（ストリッパー液位）**:
+
+| 候補変数 | $\Delta y$との相関 |
+|---|:-:|
+| XMEAS(17) 製品流量 | -0.0187 |
+| XMEAS(19) スチーム流量 | -0.0003 |
+| XMEAS(14) 分離器液抜き流量（流入） | -0.0078 |
+| XMV(9) スチーム弁 | -0.0007 |
+| XMV(8) 抜き出し弁（操作変数） | **-0.7065** |
+
+両変数とも、**独立したフロー変数(流入・流出の実測フロー)との相関はほぼゼロ**で、有意な相関を示すのは抜き出しバルブの操作変数（XMV(7)/XMV(8)）のみです。しかしこの操作変数は、液位の誤差に応じてP制御器が動かしている応答そのものであり、境界を横切る独立した物理的driving forceではありません（トポロジー・CCF検定の趣旨から見ても、これを入力に使うことは制御ループを別の形で書き直しているに過ぎない疑いが強い変数です）。
+
+#### 結論
+
+**液位が制御ループによってほぼ完璧に固定されているため、測定されているフロー変数の中に、独立した質量収支の動的信号が実質的に存在しません。** これはXMEAS(9)（反応器温度、PI制御下でのノイズ上限の議論）と同型の限界です。CLAUDE.mdが要求するΔy動的モデルは、現在利用可能なデータでは構築不可能というのが正直な結論であり、これ以上の再探索は行わず「検知対象外」として記録します。静的な制御則の式（R²=0.9999999）自体は数値的には正確ですが、CLAUDE.mdが定義する「動的デジタルツイン」の要件を満たさないため、FDIモデルとしては採用しません。
