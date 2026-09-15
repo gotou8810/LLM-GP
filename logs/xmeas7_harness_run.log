@@ -1,0 +1,39 @@
+Loading dataset: TEP_FaultFree_Training.RData ...
+Loading dataset: TEP_Faulty_Training.RData ...
+
+======================================================================
+検証: XMEAS(7) 質量収支(自己回帰項なし) (対象: xmeas_7)
+======================================================================
+特徴量: FeatureSpec[FeatureSpec(:xmeas_10, 1)]
+係数(最後が切片): [21.99711695102674, -7.412602475211624]
+R²(差分スケール, FIT): 0.0207
+MASE: FIT=0.9895 HOLDOUT=0.9889  Skill: FIT=0.0105 HOLDOUT=0.0111
+FAR(ラン単位): 0.00%
+F1: 0.5234  (TP=3545 FN=6455 FP=0)
+
+--- IDVごとのFDR ---
+  IDV( 1) | FDR=  4.20%
+  IDV( 2) | FDR=100.00%
+  IDV( 3) | FDR=  0.00%
+  IDV( 4) | FDR=  0.00%
+  IDV( 5) | FDR=  0.60%
+  IDV( 6) | FDR= 34.80%
+  IDV( 7) | FDR=100.00%
+  IDV( 8) | FDR= 80.80%
+  IDV( 9) | FDR=  0.00%
+  IDV(10) | FDR=  0.00%
+  IDV(11) | FDR=  0.00%
+  IDV(12) | FDR=100.00%
+  IDV(13) | FDR= 85.80%
+  IDV(14) | FDR=  0.60%
+  IDV(15) | FDR=  0.00%
+  IDV(16) | FDR=  0.00%
+  IDV(17) | FDR=  1.40%
+  IDV(18) | FDR=100.00%
+  IDV(19) | FDR=  0.80%
+  IDV(20) | FDR=100.00%
+
+--- アブレーション(特徴量除去時のSkill) ---
+  除去:xmeas_10: Dict{String, Real}("n_features_remaining" => 0, "skill_fit" => -2.4205233934759818e-5)
+
+結果を xmeas7_harness_results.json に書き出しました。
