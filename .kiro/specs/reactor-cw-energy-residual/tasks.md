@@ -3,7 +3,7 @@
 > すべてのCoreタスクは`src/PhysicsResiduals/ReactorCwEnergyResidual.jl`という単一ファイルを編集する（design.mdのSimplification判断）。そのため、コンポーネント間に論理的な独立性があっても、ファイル競合を避けるため`(P)`マーカーは付与しない（並列タスク判定基準「No conflicting files or shared mutable resources」に抵触するため）。
 
 - [ ] 1. Foundation: モジュール構成とデータ仕様・投入時刻・残差式の基盤整備
-- [ ] 1.1 Juliaモジュールの骨格とデータ仕様ドキュメントのセットアップ
+- [x] 1.1 Juliaモジュールの骨格とデータ仕様ドキュメントのセットアップ
   - `src/PhysicsResiduals/PhysicsResiduals.jl`（薄い集約モジュール、`NumericalEvaluator.jl`と同型のinclude構成）を作成する
   - `src/PhysicsResiduals/ReactorCwEnergyResidual.jl`の空ファイルを作成し、集約モジュールからincludeする
   - `test/PhysicsResiduals/runtests.jl`に空の`@testset`スケルトンを作成する
