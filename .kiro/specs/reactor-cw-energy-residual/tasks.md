@@ -11,7 +11,7 @@
   - 完了の確認: `julia --project=. -e 'include("src/PhysicsResiduals/PhysicsResiduals.jl")'`がエラーなく完了する
   - _Requirements: 8.1_
 
-- [ ] 1.2 故障投入時刻とラン境界ユーティリティの実装（FaultTiming）
+- [x] 1.2 故障投入時刻とラン境界ユーティリティの実装（FaultTiming）
   - `FAULT_INJECTION_SAMPLE = 21`定数を定義する
   - `verify_injection_timing`関数を実装する（対象3 IDVについて、サンプル20以前に正常データ分布からの有意な逸脱がないことを統計的に確認する）
   - `respects_run_boundary`関数を実装する（`simulationRun`をまたいだデータ参照を防ぐ分割ユーティリティ）

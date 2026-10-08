@@ -14,4 +14,9 @@ module PhysicsResiduals
 
 include("ReactorCwEnergyResidual.jl")
 
+# タスク1.2(FaultTiming)で実装した公開名をexportする。
+# 他のコンポーネント(LambdaIdentifier等、タスク1.3以降)もこれらを利用するため、
+# 本specの外部公開インターフェースとしてここに明記する(design.md Dependencies参照)。
+export FAULT_INJECTION_SAMPLE, verify_injection_timing, respects_run_boundary
+
 end # module
