@@ -19,7 +19,7 @@
   - _Requirements: 8.1, 8.2, 8.3_
   - _Boundary: FaultTiming_
 
-- [ ] 1.3 残差式と$\lambda$制約の定義（ResidualFormula）
+- [x] 1.3 残差式と$\lambda$制約の定義（ResidualFormula）
   - `build_design_matrix`関数を実装する（$y=T_r-T_{cw,out}$、$x_1=u_{10}T_{cw,out}$、$x_2=u_{10}$を構築）
   - `LAMBDA_SIGN_CONSTRAINTS`定数（$a>0$, $b<0$の期待符号）を定義する
   - `assess_quasi_steady_adequacy`関数を実装する（正常データ残差の系統的な未説明構造の有無を判定し、不十分な場合に$T_{cw,out}$の変化率項を追加するロジックを含む）

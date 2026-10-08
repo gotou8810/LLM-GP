@@ -19,4 +19,11 @@ include("ReactorCwEnergyResidual.jl")
 # 本specの外部公開インターフェースとしてここに明記する(design.md Dependencies参照)。
 export FAULT_INJECTION_SAMPLE, verify_injection_timing, respects_run_boundary
 
+# タスク1.3(ResidualFormula)で実装した公開名をexportする。
+# LambdaIdentifier(タスク2.1)がbuild_design_matrixを使って設計行列を得る
+# (design.md ResidualFormula「Implementation Notes」Integration参照)。
+export ResidualFeatures, LAMBDA_SIGN_CONSTRAINTS, LAMBDA_NON_IDENTIFIABILITY_NOTE,
+       build_design_matrix, ResidualFeaturesDynamic, build_design_matrix_with_dynamic_term,
+       assess_quasi_steady_adequacy
+
 end # module

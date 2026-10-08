@@ -158,3 +158,296 @@ function respects_run_boundary(df::DataFrame, run_col::Symbol=:simulationRun)::D
     end
     return sort(df, [run_col, :sample])
 end
+
+# ============================================================================
+# ResidualFormula (design.md「物理式・同定」> ResidualFormula参照)
+#
+# 残差式 r = k*u10*(Tcw_out - Tcw_in) - UA*(Tr - Tcw_out) を、両辺をUAで割って
+# (Tr - Tcw_out)について解いた線形形式 y = a*x1 + b*x2 として表現する
+# (brief.md「スケール不定性の解消と同定可能性」参照):
+#
+#   y  = Tr - Tcw_out                         (目的変数, XMEAS(9) - XMEAS(21))
+#   x1 = u10 * Tcw_out                         (説明変数1, XMV(10) * XMEAS(21))
+#   x2 = u10                                   (説明変数2, XMV(10))
+#   a  = k / UA                                (同定可能な比)
+#   b  = -a * Tcw_in = -(k/UA) * Tcw_in        (同定可能、Tcw_inは非測定)
+#
+# したがって y = a*x1 + b*x2 という lambda=(a,b) について線形な2パラメータ回帰になる。
+#
+# Requirements: 1.1, 1.2, 1.5, 1.6
+# ============================================================================
+
+"""
+    ResidualFeatures
+
+`build_design_matrix`の戻り値。反応器冷却水エネルギー収支残差を線形回帰
+y = a*x1 + b*x2 として同定するための設計行列(3本の等長ベクトル)を保持する
+(design.md ResidualFormula「State Management」参照)。
+
+# フィールド
+- `y::Vector{Float64}`: 目的変数 Tr - Tcw_out (XMEAS(9) - XMEAS(21))
+- `x1::Vector{Float64}`: 説明変数1 u10 * Tcw_out (XMV(10) * XMEAS(21))
+- `x2::Vector{Float64}`: 説明変数2 u10 (XMV(10))
+
+3ベクトルは常に同じ長さ・同じ行インデックス集合に対応する(Invariant)。
+"""
+struct ResidualFeatures
+    y::Vector{Float64}          # Tr - Tcw_out
+    x1::Vector{Float64}         # u10 * Tcw_out
+    x2::Vector{Float64}         # u10
+end
+
+"""
+    LAMBDA_SIGN_CONSTRAINTS
+
+未知パラメータlambda=(a, b)について、同定(タスク2.1 `LambdaIdentifier.identify_lambda`)
+より前に宣言する期待符号の制約(Requirement 1.2、design.md ResidualFormula State
+Management のリテラル定義と一致)。
+
+- `a`: k>0(伝熱係数)・UA>0(総括伝熱係数×伝熱面積)より、a=k/UA>0が期待される
+- `b`: a>0・Tcw_in>0(冷却水入口温度は絶対温度として正)より、b=-a*Tcw_in<0が期待される
+
+この定数は符号制約の「事前宣言」であり、同定結果との事後照合(符号不一致時に
+無効フラグを立てる処理, Requirement 1.3)自体は本タスクの範囲外で、
+タスク2.1の`LambdaIdentifier.check_physical_plausibility`が担う
+(design.md Requirements Traceability参照)。
+"""
+const LAMBDA_SIGN_CONSTRAINTS = (a = (:positive, 0.0), b = (:negative, 0.0))
+
+"""
+    LAMBDA_NON_IDENTIFIABILITY_NOTE
+
+Requirement 1.6: 伝熱係数`k`と総括伝熱係数×伝熱面積`UA`は、残差式
+`r = k*u10*(Tcw_out - Tcw_in) - UA*(Tr - Tcw_out)` の両辺を任意にスケールしても
+同じ式が成り立つ(両辺を定数倍しても残差=0の関係は変わらない)ため、個別には
+同定不可能である。同定可能なのは比`a = k/UA`のみであり、非測定の`Tcw_in`
+(冷却水入口温度)は`b = -a*Tcw_in`の関係から`Tcw_in = -b/a`として導出される。
+
+この定数文字列は、コード内ドキュメントとしてだけでなく、`EvaluationReport`等の
+レポート出力(design.md Data Contracts & Integration参照)にそのまま含めることを
+想定した、固定の報告用文言である(brief.md「同定可能性の結論」と同一の主張)。
+"""
+const LAMBDA_NON_IDENTIFIABILITY_NOTE =
+    "伝熱係数k(熱伝達係数)と総括伝熱係数×伝熱面積UAは、残差式 r = k*u10*(Tcw_out - Tcw_in) " *
+    "- UA*(Tr - Tcw_out) 全体のスケール不定性のため個別には同定不可能である。同定可能なのは " *
+    "比 a = k/UA のみであり、非測定の冷却水入口温度 T_cw,in は b = -a*T_cw,in の関係から " *
+    "T_cw,in = -b/a として導出される。kとUAそれぞれの値を主張してはならない。"
+
+"""
+    build_design_matrix(df; tr_col=:xmeas_9, tcw_out_col=:xmeas_21, u10_col=:xmv_10)::ResidualFeatures
+
+反応器冷却水エネルギー収支残差の設計行列を構築する(Requirement 1.1)。
+
+\$\$y = T_r - T_{cw,out}, \\quad x_1 = u_{10}\\,T_{cw,out}, \\quad x_2 = u_{10}\$\$
+
+- Preconditions: `df`に`tr_col`・`tcw_out_col`・`u10_col`の列が存在する
+- Postconditions: 返される`ResidualFeatures`の3ベクトルは`df`と同じ行数・行順序を保つ
+- Invariants: `y`・`x1`・`x2`は常に同じ行インデックス集合に対応する
+
+列が存在しない場合はサイレントなNaN伝播を避けるため明示的エラーで停止する
+(design.md Implementation Notes「Validation」参照)。
+"""
+function build_design_matrix(df::DataFrame; tr_col::Symbol=:xmeas_9, tcw_out_col::Symbol=:xmeas_21,
+                              u10_col::Symbol=:xmv_10)::ResidualFeatures
+    for col in (tr_col, tcw_out_col, u10_col)
+        if !hasproperty(df, col)
+            error("build_design_matrix: dfに必要な列 '$(col)' が存在しません")
+        end
+    end
+
+    tr = Vector{Float64}(df[!, tr_col])
+    tcw_out = Vector{Float64}(df[!, tcw_out_col])
+    u10 = Vector{Float64}(df[!, u10_col])
+
+    y = tr .- tcw_out
+    x1 = u10 .* tcw_out
+    x2 = u10
+
+    return ResidualFeatures(y, x1, x2)
+end
+
+"""
+    ResidualFeaturesDynamic
+
+Requirement 1.5の「準定常(代数式)の仮定が正常データの挙動を十分に説明できないと
+判定された場合に、Tcw_outの時間変化率を表す項を残差式に追加する」ロジックの戻り値。
+`ResidualFeatures`の3本に、動的項`x3 = d(Tcw_out)/dt`(後方差分)を加えた4本の
+等長ベクトルを保持する。
+
+design.mdのResidualFormula Service Interfaceは`assess_quasi_steady_adequacy`の
+戻り値をBool(十分/不十分の判定のみ)と定義しているため、この判定を受けて実際に
+動的項付きの設計行列を構築する役割は、本関数`build_design_matrix_with_dynamic_term`
+が担う(design.md ResidualFormula「Responsibilities & Constraints」の「不十分なら
+Tcw_outの変化率項を式に追加する」という責務を、判定とは別の関数として分離して実装)。
+"""
+struct ResidualFeaturesDynamic
+    y::Vector{Float64}          # Tr - Tcw_out
+    x1::Vector{Float64}         # u10 * Tcw_out
+    x2::Vector{Float64}         # u10
+    x3::Vector{Float64}         # d(Tcw_out)/dt (後方差分, ラン境界を尊重)
+end
+
+"""
+    build_design_matrix_with_dynamic_term(df; tr_col=:xmeas_9, tcw_out_col=:xmeas_21,
+                                           u10_col=:xmv_10, run_col=:simulationRun,
+                                           sample_col=:sample, dt_minutes=3.0)::ResidualFeaturesDynamic
+
+Requirement 1.5: 準定常仮定(`assess_quasi_steady_adequacy`が`false`)が不十分と
+判定された場合に追加する、Tcw_outの時間変化率項
+
+\$\$x_3(t) = \\frac{T_{cw,out}(t) - T_{cw,out}(t-1)}{\\Delta t}\$\$
+
+(後方差分、既定`\\Delta t = 3`分、`docs/dataset_spec.md`のサンプリング間隔に一致)
+を含む設計行列を構築する。
+
+`respects_run_boundary`(タスク1.2、FaultTiming)を用いて`run_col`でソート・分割し、
+各`simulationRun`の先頭サンプルは後方差分が取れないため除外する(ラン境界をまたいだ
+差分を計算しないこと、`docs/dataset_spec.md`「ラン境界の扱い」参照)。したがって
+戻り値の行数は`df`の行数より`unique(df[!, run_col])`の個数だけ少ない。
+
+列が存在しない場合は明示的エラーで停止する。
+"""
+function build_design_matrix_with_dynamic_term(df::DataFrame; tr_col::Symbol=:xmeas_9,
+                                                tcw_out_col::Symbol=:xmeas_21, u10_col::Symbol=:xmv_10,
+                                                run_col::Symbol=:simulationRun, sample_col::Symbol=:sample,
+                                                dt_minutes::Float64=3.0)::ResidualFeaturesDynamic
+    for col in (tr_col, tcw_out_col, u10_col, run_col, sample_col)
+        if !hasproperty(df, col)
+            error("build_design_matrix_with_dynamic_term: dfに必要な列 '$(col)' が存在しません")
+        end
+    end
+
+    sorted_df = respects_run_boundary(df, run_col)
+
+    y_all = Float64[]
+    x1_all = Float64[]
+    x2_all = Float64[]
+    x3_all = Float64[]
+
+    for g in groupby(sorted_df, run_col)
+        tr = Vector{Float64}(g[!, tr_col])
+        tcw_out = Vector{Float64}(g[!, tcw_out_col])
+        u10 = Vector{Float64}(g[!, u10_col])
+        n = length(tcw_out)
+        if n < 2
+            continue
+        end
+        for i in 2:n
+            push!(y_all, tr[i] - tcw_out[i])
+            push!(x1_all, u10[i] * tcw_out[i])
+            push!(x2_all, u10[i])
+            push!(x3_all, (tcw_out[i] - tcw_out[i - 1]) / dt_minutes)
+        end
+    end
+
+    return ResidualFeaturesDynamic(y_all, x1_all, x2_all, x3_all)
+end
+
+"""
+    _norminvcdf(p)::Float64
+
+標準正規分布の累積分布関数の逆関数(分位点関数)の近似。Peter J. Acklamの
+有理関数近似(相対誤差 <~ 1.15e-9)を実装する。
+
+`Statistics`標準ライブラリには分布の分位点関数が含まれず、本specは新規パッケージ
+依存を追加しない方針(design.md Technology Stack参照)のため、
+`assess_quasi_steady_adequacy`が有意水準から臨界値を求めるのに必要な
+この近似を自前で実装する。
+"""
+function _norminvcdf(p::Float64)::Float64
+    if !(0.0 < p < 1.0)
+        error("_norminvcdf: pは(0,1)の範囲でなければなりません (p=$p)")
+    end
+
+    a1 = -3.969683028665376e+01; a2 = 2.209460984245205e+02
+    a3 = -2.759285104469687e+02; a4 = 1.383577518672690e+02
+    a5 = -3.066479806614716e+01; a6 = 2.506628277459239e+00
+
+    b1 = -5.447609879822406e+01; b2 = 1.615858368580409e+02
+    b3 = -1.556989798598866e+02; b4 = 6.680131188771972e+01
+    b5 = -1.328068155288572e+01
+
+    c1 = -7.784894002430293e-03; c2 = -3.223964580411365e-01
+    c3 = -2.400758277161838e+00; c4 = -2.549732539343734e+00
+    c5 = 4.374664141464968e+00; c6 = 2.938163982698783e+00
+
+    d1 = 7.784695709041462e-03; d2 = 3.224671290700398e-01
+    d3 = 2.445134137142996e+00; d4 = 3.754408661907416e+00
+
+    p_low = 0.02425
+    p_high = 1 - p_low
+
+    if p < p_low
+        q = sqrt(-2 * log(p))
+        return (((((c1 * q + c2) * q + c3) * q + c4) * q + c5) * q + c6) /
+               ((((d1 * q + d2) * q + d3) * q + d4) * q + 1)
+    elseif p <= p_high
+        q = p - 0.5
+        r = q * q
+        return (((((a1 * r + a2) * r + a3) * r + a4) * r + a5) * r + a6) * q /
+               (((((b1 * r + b2) * r + b3) * r + b4) * r + b5) * r + 1)
+    else
+        q = sqrt(-2 * log(1 - p))
+        return -(((((c1 * q + c2) * q + c3) * q + c4) * q + c5) * q + c6) /
+                ((((d1 * q + d2) * q + d3) * q + d4) * q + 1)
+    end
+end
+
+"""
+    assess_quasi_steady_adequacy(normal_resid; significance=0.05)::Bool
+
+Requirement 1.5: 準定常(代数式)仮定のもとでの残差が、正常データの挙動を十分に
+説明できるかを判定する(design.md ResidualFormula Service Interfaceのリテラル
+シグネチャに一致)。`true`なら準定常仮定で十分、`false`なら
+`build_design_matrix_with_dynamic_term`による動的項の追加が必要と判定する。
+
+# 統計的方法(本実装での選択、design.md Implementation Notes「Risks」参照)
+入力`normal_resid`(凍結前の正常データに対する残差 y - (a*x1 + b*x2) を想定)の
+ラグ1自己相関係数
+
+\$\$\\hat\\rho_1 = \\frac{\\sum_{t=1}^{n-1}(r_t-\\bar r)(r_{t+1}-\\bar r)}{\\sum_{t=1}^{n}(r_t-\\bar r)^2}\$\$
+
+を計算する。残差が系統的な未説明構造を持たない(帰無仮説: ホワイトノイズ)場合、
+大標本近似で \$\\hat\\rho_1 \\sim N(0, 1/n)\$ (Bartlettの近似)が成り立つことを用いて、
+
+\$\$z = \\hat\\rho_1\\sqrt{n}\$\$
+
+を計算し、有意水準`significance`(両側)に対応する標準正規分布の臨界値`z_crit`と
+比較する。`|z| <= z_crit`であれば準定常仮定で十分(`true`)、それを超えれば
+系統的な未説明構造(例: Tcw_outの緩やかな時間変化に由来する自己相関)が残差に
+残っており、動的項の追加が必要(`false`)と判定する。
+
+この手法を選んだ理由: 準定常(代数式)仮定が破れている場合、本来は動的項
+(d Tcw_out/dt)で説明されるべき時間方向の構造が、代数式の残差に時間相関として
+現れるはずである。ラグ1自己相関は最も単純で解釈しやすい診断であり、design.mdが
+「具体的な検定方法は実装時に正常データで検証する」としたリスクに対する、
+本実装での明示的な選択である。
+
+- Preconditions: `normal_resid`は凍結前の正常データに対する残差系列(長さ10以上)
+- Postconditions: `true`なら準定常仮定で十分、`false`なら動的項の追加が必要
+"""
+function assess_quasi_steady_adequacy(normal_resid::Vector{Float64}; significance::Float64=0.05)::Bool
+    n = length(normal_resid)
+    if n < 10
+        error("assess_quasi_steady_adequacy: 残差系列が短すぎます(n=$(n))。十分な長さの正常データ残差を渡してください。")
+    end
+    if !(0.0 < significance < 1.0)
+        error("assess_quasi_steady_adequacy: significanceは(0,1)の範囲でなければなりません (significance=$significance)")
+    end
+
+    r_centered = normal_resid .- mean(normal_resid)
+    denom = sum(r_centered .^ 2)
+    if denom == 0.0
+        # 残差が完全に定数(分散ゼロ)の場合、系統的構造を議論する余地がないため
+        # 準定常仮定で十分とみなす
+        return true
+    end
+
+    numer = sum(r_centered[1:end - 1] .* r_centered[2:end])
+    rho1 = numer / denom
+
+    z = rho1 * sqrt(n)
+    z_crit = _norminvcdf(1.0 - significance / 2.0)
+
+    return abs(z) <= z_crit
+end
