@@ -451,3 +451,210 @@ function assess_quasi_steady_adequacy(normal_resid::Vector{Float64}; significanc
 
     return abs(z) <= z_crit
 end
+
+# ============================================================================
+# LambdaIdentifier (design.md「同定・検証」> LambdaIdentifier参照)
+#
+# 正常データを`simulationRun`基準でfit/holdout部分集合に重複なく分割し(Requirement 2.2)、
+# fit部分集合のみを使って厳密OLSでlambda=(a,b)を同定し(Requirement 2.1)、
+# 符号制約(Requirement 1.3)と導出T_cw,inの物理的妥当性(Requirement 1.4)を検証する。
+#
+# Requirements: 2.1, 2.2, 2.3, 1.3, 1.4
+# ============================================================================
+
+"""
+    NormalFitSplit
+
+`split_normal_data`が返すfit部分集合を保持する、不透明な軽量ラッパー型。
+
+# 型安全性に関する設計判断(タスク2.1本文「入力の型シグネチャが異常データを受け取れない
+ようにする」への対応、design.md LambdaIdentifier「Responsibilities & Constraints」の
+「入力は正常運転データのみ。異常データへの参照を一切持たない(関数シグネチャレベルで
+異常データ型を受け取らないことで保証する)」という記述を実現するための拡張)
+
+Juliaの型システムには、「このDataFrameの内容が本当に正常運転データか」という
+値の出自・意味的性質を実行時に追跡する機能はない(`DataFrame`はデータの由来を
+型として区別しない)。したがって「異常データ型を受け取らない」という字面通りの
+保証は、生`DataFrame`を引数に取る関数では原理的に実現できない。
+
+本実装では、`identify_lambda`の引数型を生`DataFrame`ではなく本型`NormalFitSplit`に
+限定することで、**呼び出し経路**のレベルでの型安全性を実現する:
+`split_normal_data`(本ファイルで定義)を経由して得られたfit部分集合だけが、
+慣用的に`NormalFitSplit`としてラップされて`identify_lambda`に渡される。
+異常データを`TEPDataLoader.load_rdata`等で直接読み込んだ生`DataFrame`は、
+`identify_lambda`のメソッドシグネチャに一致しないため、Juliaのメソッド
+ディスパッチの段階で`MethodError`となり、呼び出し自体が成立しない。
+
+design.mdのリテラルシグネチャ(`split_normal_data(...)::Tuple{DataFrame,DataFrame}`、
+`identify_lambda(df_fit::DataFrame)::ReactorCwLambda`)をこの点で拡張している。
+この拡張はタスク1.2/1.3で認められた前例(design.mdの記述意図を字面より優先し、
+開示された拡張として受理する)に従う。
+"""
+struct NormalFitSplit
+    df::DataFrame
+end
+
+"""
+    ReactorCwLambda
+
+反応器冷却水エネルギー収支残差の未知パラメータlambda=(a,b)と、そこから導出される
+非測定の冷却水入口温度T_cw,in、および符号・物理的妥当性チェックの結果を1つに保持する
+イミュータブルな値型(design.md Logical Data Model「無効なlambdaが誤って検知に
+使われることを型レベルで防ぐ」設計方針、Requirement 6.3の前提)。
+
+`mutable struct`ではなく`struct`として定義することで、一度生成された`ReactorCwLambda`
+の値は変更不可能であり、検知用に凍結したlambdaが誤って上書きされることを型レベルで
+防ぐ(将来タスクのLambdaDiagnostics等が新しい`ReactorCwLambda`値を返すのみで、
+既存の値を書き換えられないことの保証)。
+
+# フィールド
+- `a::Float64`: k/UA(伝熱係数と総括伝熱係数×伝熱面積の比)
+- `b::Float64`: -a*T_cw,in
+- `t_cw_in::Float64`: 導出値 -b/a (非測定の冷却水入口温度)
+- `valid::Bool`: 符号制約(Requirement 1.3)・物理的妥当性(Requirement 1.4)の検証結果
+- `invalid_reason::Union{String,Nothing}`: `valid=false`の場合に具体的な理由を保持する
+"""
+struct ReactorCwLambda
+    a::Float64
+    b::Float64
+    t_cw_in::Float64
+    valid::Bool
+    invalid_reason::Union{String,Nothing}
+end
+
+"""
+    PLAUSIBLE_TCW_IN_RANGE
+
+非測定の冷却水入口温度T_cw,inについて、工業用冷却水として物理的に妥当な範囲(Requirement 1.4)。
+
+research.mdのRisks「T_cw,inの物理的妥当範囲が未定義」および「具体的な数値範囲は
+実装時に`reference/teprob.f`を参照せず、工業用冷却水の一般的な知識(例: 0〜60°C程度)
+から独立に設定し、データとの整合性のみ確認する」という方針に基づき設定する
+(`teprob.f`の数値を読み取ってlambdaの値を埋めることはbrief.md「teprob.fの使用規律」で
+明示的に禁止されている。この範囲はデータリークと無関係な、一般的な工業知識のみに基づく)。
+"""
+const PLAUSIBLE_TCW_IN_RANGE = (0.0, 60.0)
+
+"""
+    split_normal_data(df_normal; fit_run_max=400, run_col=:simulationRun)::Tuple{NormalFitSplit,DataFrame}
+
+正常運転データを`run_col`(既定`:simulationRun`)基準でfit部分集合とholdout部分集合に
+重複なく分割する(Requirement 2.2)。`run_col <= fit_run_max`の行をfit側、
+`run_col > fit_run_max`の行をholdout側とする(`src/VerificationHarness.jl`の
+`fit_run_max`分割規約(`filter(row -> row.simulationRun <= fit_run_max, df)`)と同一の慣用句)。
+
+fit側は`identify_lambda`に渡せる型`NormalFitSplit`でラップして返す。holdout側は
+将来タスク(LambdaValidator.check_holdout_stability)がそのまま`DataFrame`として
+使う想定のため、ラップしない(design.md LambdaValidator Service Interfaceの
+`df_holdout::DataFrame`と整合させる)。
+
+- Preconditions: `df_normal`に`run_col`列が存在する
+- Postconditions: 戻り値の2部分集合は`run_col`の値で完全に分離され(重複なし)、
+  行の欠落・重複なく元の`df_normal`を汲み尽くす
+"""
+function split_normal_data(df_normal::DataFrame; fit_run_max::Int=400,
+                            run_col::Symbol=:simulationRun)::Tuple{NormalFitSplit,DataFrame}
+    if !hasproperty(df_normal, run_col)
+        error("split_normal_data: df_normalに必要な列 '$(run_col)' が存在しません")
+    end
+
+    df_fit = filter(row -> row[run_col] <= fit_run_max, df_normal)
+    df_holdout = filter(row -> row[run_col] > fit_run_max, df_normal)
+
+    return (NormalFitSplit(df_fit), df_holdout)
+end
+
+"""
+    identify_lambda(df_fit::NormalFitSplit)::ReactorCwLambda
+
+正常データのfit部分集合のみを用いて、厳密OLSでlambda=(a,b)を同定し、
+T_cw,in = -b/a を導出する(Requirement 2.1)。
+
+\$\$y = a\\,x_1 + b\\,x_2, \\quad y=T_r-T_{cw,out},\\ x_1=u_{10}T_{cw,out},\\ x_2=u_{10}\$\$
+
+`ResidualFormula.build_design_matrix`で設計行列(y, x1, x2)を構築し、
+`A = [x1 x2]`として`A \\ y`(`linear_fit.jl`末尾の厳密OLS`G \\ (y .- h)`と同じ
+数値解法の慣用句。本残差は物理的導出から線形であることが自明なため、
+`linear_fit.jl`の重ね合わせの原理による線形性検証ステップは不要、research.md
+「既存Julia資産の残差式への適用可能性」参照)で解く。
+
+引数型は生`DataFrame`ではなく`NormalFitSplit`(`split_normal_data`だけが正規に
+生成する)に限定されており、これにより異常データを直接渡すことが型シグネチャの
+レベルで構造的に不可能になっている(タスク2.1本文、`NormalFitSplit`のドキュメント参照)。
+
+本関数自体は符号・物理的妥当性の検証を行わない(それは`check_physical_plausibility`の
+責務であり、design.mdのService Interfaceで両者が独立した関数として定義されている
+ことに従う)。`valid=true, invalid_reason=nothing`を暫定値として返し、
+`check_physical_plausibility`の呼び出しによって最終的な検証結果に更新される。
+
+- Preconditions: `df_fit.df`は正常データの同定用部分集合のみ(`split_normal_data`の出力)
+- Postconditions: 返される`ReactorCwLambda.t_cw_in`は`-b/a`に厳密に一致する
+"""
+function identify_lambda(df_fit::NormalFitSplit)::ReactorCwLambda
+    feats = build_design_matrix(df_fit.df)
+
+    n = length(feats.y)
+    if n < 3
+        error("identify_lambda: 同定に十分なデータ行がありません (n=$n)。少なくとも3行必要です。")
+    end
+
+    design_matrix = hcat(feats.x1, feats.x2)
+    coeffs = design_matrix \ feats.y
+    a = coeffs[1]
+    b = coeffs[2]
+
+    if a == 0.0
+        error("identify_lambda: aがゼロと同定されたため T_cw,in = -b/a を計算できません")
+    end
+    t_cw_in = -b / a
+
+    return ReactorCwLambda(a, b, t_cw_in, true, nothing)
+end
+
+"""
+    check_physical_plausibility(lam::ReactorCwLambda; tcw_out_mean::Float64)::ReactorCwLambda
+
+同定されたlambdaについて、符号制約(Requirement 1.3)と導出T_cw,inの物理的妥当性
+(Requirement 1.4)をまとめて検証し、検証結果を反映した新しい`ReactorCwLambda`を返す。
+
+# 検証内容
+1. **符号制約(Requirement 1.3)**: `ResidualFormula.LAMBDA_SIGN_CONSTRAINTS`の事前宣言
+   (`a`は正、`b`は負)に実際の同定結果が一致するか。一致しなければ`valid=false`、
+   `invalid_reason`に「符号不一致」である旨を記録する。
+2. **物理的妥当性(Requirement 1.4)**: 符号制約を満たした場合に限り、導出された
+   `T_cw,in`が`tcw_out_mean`(冷却水出口温度の正常平均)未満であり(冷却水は反応器を
+   通過する間に加熱されるため、入口温度は出口温度より低いはずである)、かつ
+   `PLAUSIBLE_TCW_IN_RANGE`(工業用冷却水として妥当な範囲)内にあるか。いずれかを
+   満たさなければ`valid=false`、`invalid_reason`に「物理的不整合」である旨を記録する。
+
+両方の検証に合格した場合のみ`valid=true, invalid_reason=nothing`を返す。
+`a`・`b`・`t_cw_in`の値そのものは変更しない(検証は値を書き換えず、合否のみを判定する)。
+
+- Preconditions: `lam`は`identify_lambda`の出力(または同形式の値)
+- Postconditions: `valid=false`の場合、`invalid_reason`に具体的な理由(符号不一致／
+  物理的不整合のいずれか)が入る
+"""
+function check_physical_plausibility(lam::ReactorCwLambda; tcw_out_mean::Float64)::ReactorCwLambda
+    a_direction, a_threshold = LAMBDA_SIGN_CONSTRAINTS.a
+    b_direction, b_threshold = LAMBDA_SIGN_CONSTRAINTS.b
+
+    a_sign_ok = a_direction == :positive ? lam.a > a_threshold : lam.a < a_threshold
+    b_sign_ok = b_direction == :negative ? lam.b < b_threshold : lam.b > b_threshold
+
+    if !(a_sign_ok && b_sign_ok)
+        reason = "符号不一致(Requirement 1.3): a=$(lam.a) (期待: $(a_direction), 閾値 $(a_threshold)), " *
+                  "b=$(lam.b) (期待: $(b_direction), 閾値 $(b_threshold))"
+        return ReactorCwLambda(lam.a, lam.b, lam.t_cw_in, false, reason)
+    end
+
+    below_outlet = lam.t_cw_in < tcw_out_mean
+    in_plausible_range = PLAUSIBLE_TCW_IN_RANGE[1] <= lam.t_cw_in <= PLAUSIBLE_TCW_IN_RANGE[2]
+
+    if !(below_outlet && in_plausible_range)
+        reason = "物理的不整合(Requirement 1.4): T_cw,in=$(lam.t_cw_in) " *
+                  "(T_cw,out平均=$(tcw_out_mean)未満であるべき, 妥当範囲=$(PLAUSIBLE_TCW_IN_RANGE))"
+        return ReactorCwLambda(lam.a, lam.b, lam.t_cw_in, false, reason)
+    end
+
+    return ReactorCwLambda(lam.a, lam.b, lam.t_cw_in, true, nothing)
+end

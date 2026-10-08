@@ -1,6 +1,7 @@
 using Test
 using DataFrames
 using Random
+using Statistics
 
 include("../../src/PhysicsResiduals/PhysicsResiduals.jl")
 using .PhysicsResiduals
@@ -247,6 +248,232 @@ using .TEPDataLoader: load_rdata
         @test occursin("UA", note)
         @test occursin("k/UA", note)
         @test occursin("T_cw,in", note) || occursin("Tcw_in", note) || occursin("Tcw,in", note)
+    end
+
+    # ========================================================================
+    # タスク2.1: 正常データの分割とlambda同定(LambdaIdentifier)
+    # Requirements: 2.1, 2.2, 2.3, 1.3, 1.4
+    # ========================================================================
+
+    @testset "split_normal_data (実データ: 非重複・run境界の正しさ)" begin
+        # Requirement 2.2: fit/holdoutの2部分集合が重複なく分割されることを、
+        # 実データ(simulationRun=1..500)で確認する(design.md LambdaIdentifier
+        # Service Interfaceのリテラルシグネチャ: fit_run_max既定400, run_col既定:simulationRun)。
+        project_root = dirname(dirname(@__DIR__))
+        healthy_path = joinpath(project_root, "TEP_FaultFree_Training.RData")
+
+        if isfile(healthy_path)
+            df_normal = load_rdata(healthy_path)
+
+            df_fit_wrapped, df_holdout = PhysicsResiduals.split_normal_data(df_normal)
+
+            # 型安全性要件(タスク2.1本文): identify_lambdaに渡せる側はNormalFitSplitで
+            # ラップされている。holdout側はLambdaValidator(タスク3.1以降)がそのまま
+            # DataFrameとして使う想定のためラップしない(design.mdのLambdaValidator
+            # Service Interface df_holdout::DataFrameと整合)。
+            @test df_fit_wrapped isa PhysicsResiduals.NormalFitSplit
+            @test df_holdout isa DataFrames.DataFrame
+
+            df_fit = df_fit_wrapped.df
+
+            # 既定fit_run_max=400: fit側はすべてrun<=400、holdout側はすべてrun>400
+            @test all(df_fit.simulationRun .<= 400)
+            @test all(df_holdout.simulationRun .> 400)
+
+            # 非重複性(Requirement 2.2): 両部分集合のrun集合に共通部分がない
+            fit_runs = Set(df_fit.simulationRun)
+            holdout_runs = Set(df_holdout.simulationRun)
+            @test isempty(intersect(fit_runs, holdout_runs))
+
+            # 行の欠落・重複がないこと(2分割が全体を汲み尽くす)
+            @test nrow(df_fit) + nrow(df_holdout) == nrow(df_normal)
+
+            # カスタムfit_run_maxでも正しく分割されること
+            df_fit_200_wrapped, df_holdout_200 = PhysicsResiduals.split_normal_data(df_normal; fit_run_max = 200)
+            @test all(df_fit_200_wrapped.df.simulationRun .<= 200)
+            @test all(df_holdout_200.simulationRun .> 200)
+            @test nrow(df_fit_200_wrapped.df) + nrow(df_holdout_200) == nrow(df_normal)
+
+            # 必須列が欠けている場合は明示的エラー
+            df_missing = DataFrame(sample = [1, 2])
+            @test_throws ErrorException PhysicsResiduals.split_normal_data(df_missing)
+        else
+            @warn "Local test data not found. Skipping split_normal_data real-data test."
+        end
+    end
+
+    @testset "identify_lambda (合成データ: タスク2.1完了確認、既知a,bの復元)" begin
+        # タスク2.1の完了確認: 既知のa,bから生成した合成データに対しidentify_lambdaを
+        # 実行すると、数値許容誤差内で元のa,bが復元される。
+        #
+        # y = a*x1 + b*x2 (x1=u10*Tcw_out, x2=u10) という線形関係を、
+        # xmeas_9 = Tr = Tcw_out + a*x1 + b*x2 として構築することで、
+        # build_design_matrixが計算するy=Tr-Tcw_outが厳密にa*x1+b*x2に一致するようにする。
+        rng = MersenneTwister(777)
+        n = 80
+        a_true = 2.0
+        t_cw_in_true = 30.0           # Tcw_outの正常平均(94.6)より十分低く、妥当範囲[0,60]内
+        b_true = -a_true * t_cw_in_true  # = -60.0
+
+        tcw_out = 90.0 .+ 10.0 .* rand(rng, n)      # [90, 100]
+        u10 = 30.0 .+ 20.0 .* rand(rng, n)          # [30, 50]
+        x1 = u10 .* tcw_out
+        x2 = u10
+        tr = tcw_out .+ a_true .* x1 .+ b_true .* x2  # 雑音なし(厳密OLSの復元能力を直接検証)
+
+        df_synth = DataFrame(xmeas_9 = tr, xmeas_21 = tcw_out, xmv_10 = u10)
+        wrapped = PhysicsResiduals.NormalFitSplit(df_synth)
+
+        lam = PhysicsResiduals.identify_lambda(wrapped)
+
+        @test lam isa PhysicsResiduals.ReactorCwLambda
+        @test isapprox(lam.a, a_true; atol = 1e-6, rtol = 1e-6)
+        @test isapprox(lam.b, b_true; atol = 1e-6, rtol = 1e-6)
+        @test isapprox(lam.t_cw_in, t_cw_in_true; atol = 1e-4, rtol = 1e-4)
+
+        # 小さなガウス雑音を加えた場合でも、十分なサンプル数(n=80)があれば
+        # 元のa,bに近い値が復元されること(厳密ゼロ誤差は要求しない)
+        tr_noisy = tr .+ randn(rng, n) .* 1e-3
+        df_noisy = DataFrame(xmeas_9 = tr_noisy, xmeas_21 = tcw_out, xmv_10 = u10)
+        lam_noisy = PhysicsResiduals.identify_lambda(PhysicsResiduals.NormalFitSplit(df_noisy))
+        @test isapprox(lam_noisy.a, a_true; atol = 1e-2, rtol = 1e-2)
+        @test isapprox(lam_noisy.b, b_true; atol = 1.0, rtol = 1e-2)
+    end
+
+    @testset "identify_lambda 型安全性(異常データを受け取れない型シグネチャ)" begin
+        # タスク2.1本文: 「入力の型シグネチャが異常データを受け取れないようにする」。
+        #
+        # Juliaの型システムは値の出自(このDataFrameが本当に正常運転データか)を
+        # 追跡できないため、本実装はidentify_lambdaの引数型をNormalFitSplit
+        # (split_normal_dataだけが正規に生成する不透明ラッパー)に限定することで、
+        # 「split_normal_dataを経由しない生DataFrame(異常データをload_rdataで
+        # 直接読み込んだものを含む)はidentify_lambdaに渡せない」ことを、
+        # 呼び出し側のメソッド解決(ディスパッチ)の段階でMethodErrorとして強制する。
+        #
+        # これはdesign.mdのリテラルシグネチャ`identify_lambda(df_fit::DataFrame)`を
+        # 拡張したものである(タスク1.2/1.3で認められた、design.mdの記述意図
+        # 「関数シグネチャレベルで異常データ型を受け取らないことで保証する」を
+        # 実現するための開示済みの拡張。CONCERNとして状況報告で明記する)。
+        df_plain = DataFrame(
+            xmeas_9 = [120.0, 121.0, 122.0],
+            xmeas_21 = [94.0, 94.5, 95.0],
+            xmv_10 = [40.0, 41.0, 42.0]
+        )
+
+        # 生DataFrame(異常データを直接load_rdataしたものを模擬)はidentify_lambdaの
+        # メソッドシグネチャに一致するメソッドが存在しないため、MethodErrorになる。
+        @test_throws MethodError PhysicsResiduals.identify_lambda(df_plain)
+
+        # split_normal_dataが返すNormalFitSplitでラップされたデータは受理される
+        # (正常経路であることの確認、上のテストと対になる陽性ケース)
+        wrapped = PhysicsResiduals.NormalFitSplit(df_plain)
+        lam = PhysicsResiduals.identify_lambda(wrapped)
+        @test lam isa PhysicsResiduals.ReactorCwLambda
+    end
+
+    @testset "check_physical_plausibility (符号制約・物理的妥当性)" begin
+        # Requirement 1.3: 符号が事前宣言(a>0, b<0)と一致しない場合は無効フラグ。
+        # Requirement 1.4: 導出T_cw,inがT_cw,out以上、または妥当範囲外なら物理的不整合フラグ。
+
+        # 妥当なケース: a>0, b<0, Tcw_in=30.0 < Tcw_out平均94.6, 妥当範囲[0,60]内
+        lam_ok = PhysicsResiduals.ReactorCwLambda(2.0, -60.0, 30.0, true, nothing)
+        result_ok = PhysicsResiduals.check_physical_plausibility(lam_ok; tcw_out_mean = 94.6)
+        @test result_ok.valid == true
+        @test result_ok.invalid_reason === nothing
+        # a, b, t_cw_inの値そのものは変更されない
+        @test result_ok.a == lam_ok.a
+        @test result_ok.b == lam_ok.b
+        @test result_ok.t_cw_in == lam_ok.t_cw_in
+
+        # 不正ケース1: 符号不一致(aが負、本来は正が期待される)
+        lam_wrong_sign = PhysicsResiduals.ReactorCwLambda(-2.0, -60.0, -30.0, true, nothing)
+        result_wrong_sign = PhysicsResiduals.check_physical_plausibility(lam_wrong_sign; tcw_out_mean = 94.6)
+        @test result_wrong_sign.valid == false
+        @test result_wrong_sign.invalid_reason !== nothing
+        @test occursin("符号", result_wrong_sign.invalid_reason)
+
+        # 不正ケース2: Tcw_in(=100.0)がTcw_out平均(94.6)以上 -> 物理的不整合
+        lam_too_hot = PhysicsResiduals.ReactorCwLambda(2.0, -200.0, 100.0, true, nothing)
+        result_too_hot = PhysicsResiduals.check_physical_plausibility(lam_too_hot; tcw_out_mean = 94.6)
+        @test result_too_hot.valid == false
+        @test result_too_hot.invalid_reason !== nothing
+        @test occursin("物理的不整合", result_too_hot.invalid_reason)
+
+        # 不正ケース3: 符号は正しい(a>0, b<0)が、Tcw_in(=85.0)が妥当範囲[0,60]の外
+        # (Tcw_out平均94.6未満ではあるが、工業用冷却水として非現実的に高い) -> 物理的不整合。
+        # 注意: 符号制約下ではt_cw_in=-b/a>0が自動的に成り立つため、「符号は正しいが
+        # t_cw_inが負」という組み合わせは数学的に矛盾する。妥当範囲の上限超過で
+        # このケースを構成する。
+        t_cw_in_too_high = 85.0
+        a_case3 = 2.0
+        b_case3 = -a_case3 * t_cw_in_too_high  # = -170.0 (符号は正しくb<0)
+        lam_out_of_range = PhysicsResiduals.ReactorCwLambda(a_case3, b_case3, t_cw_in_too_high, true, nothing)
+        result_out_of_range = PhysicsResiduals.check_physical_plausibility(lam_out_of_range; tcw_out_mean = 94.6)
+        @test result_out_of_range.valid == false
+        @test result_out_of_range.invalid_reason !== nothing
+        @test occursin("物理的不整合", result_out_of_range.invalid_reason)
+    end
+
+    @testset "ReactorCwLambdaはイミュータブル" begin
+        # design.md Logical Data Model: ReactorCwLambda等はすべてイミュータブルな
+        # 値型(Julia struct)として定義する(Requirement 6.3の型レベル保証の前提)。
+        lam = PhysicsResiduals.ReactorCwLambda(1.0, -1.0, 1.0, true, nothing)
+        @test_throws ErrorException (lam.a = 99.0)
+        @test isimmutable(lam)
+    end
+
+    @testset "identify_lambda (実データ: パイプライン統合・既知の多重共線性所見)" begin
+        # identify_lambda -> check_physical_plausibilityのパイプラインが実データ
+        # (fit部分集合、全500runのうちrun<=400、n=200,000行)でエラーなく動作し、
+        # 整合した型付き結果を返すことを確認する。
+        #
+        # 既知の所見(本テスト実行時に確認、CLAUDE.md §8の学術的誠実さに従い正直に記録する):
+        # 閉ループ制御下では、x1=u10*Tcw_out と x2=u10 の相関がcor=0.995に達する
+        # 強い多重共線性が生じる(Tcw_out=XMEAS(21)の標準偏差がわずか0.131であり、
+        # 平均94.6に対してほぼ一定であるため、x1はx2のほぼ定数倍になる)。これにより
+        # 全fitデータ(n=200,000)に対する厳密OLSは、符号が事前宣言(a>0, b<0)と
+        # 一致しない不安定な解(a,bの符号が反転)を返すことがある。
+        #
+        # これはidentify_lambda/check_physical_plausibility自体の実装の誤りではなく、
+        # 実データの統計的性質(閉ループ制御による説明変数の低分散・高相関)が引き起こす
+        # 既知のリスクである。design.mdはこの種の不安定性をまさにLambdaValidator
+        # (タスク3.1以降、ブートストラップ不確かさ・holdout安定性チェック)の責務として
+        # 分離しており、本タスク(2.1)のcheck_physical_plausibilityは「符号・物理的
+        # 妥当性を正しく検証して報告する」ことが責務であって「常にvalid=trueを返す」
+        # ことではない。したがって本テストは、結果の妥当性を一方的に仮定せず、
+        # valid/invalidのいずれであっても内部整合性(invalid時は理由が伴うこと、
+        # valid時は符号・範囲制約を実際に満たすこと)を検証する。
+        project_root = dirname(dirname(@__DIR__))
+        healthy_path = joinpath(project_root, "TEP_FaultFree_Training.RData")
+
+        if isfile(healthy_path)
+            df_normal = load_rdata(healthy_path)
+            df_fit_wrapped, _df_holdout = PhysicsResiduals.split_normal_data(df_normal)
+
+            lam_raw = PhysicsResiduals.identify_lambda(df_fit_wrapped)
+            @test lam_raw isa PhysicsResiduals.ReactorCwLambda
+            @test isfinite(lam_raw.a)
+            @test isfinite(lam_raw.b)
+            @test isfinite(lam_raw.t_cw_in)
+            @test isapprox(lam_raw.t_cw_in, -lam_raw.b / lam_raw.a; rtol = 1e-9)
+
+            tcw_out_mean = mean(df_fit_wrapped.df.xmeas_21)
+            lam = PhysicsResiduals.check_physical_plausibility(lam_raw; tcw_out_mean = tcw_out_mean)
+
+            @test lam isa PhysicsResiduals.ReactorCwLambda
+            if lam.valid
+                @test lam.invalid_reason === nothing
+                @test lam.a > 0.0
+                @test lam.b < 0.0
+                @test lam.t_cw_in < tcw_out_mean
+                @test PhysicsResiduals.PLAUSIBLE_TCW_IN_RANGE[1] <= lam.t_cw_in <= PhysicsResiduals.PLAUSIBLE_TCW_IN_RANGE[2]
+            else
+                @test lam.invalid_reason isa String
+                @test !isempty(lam.invalid_reason)
+            end
+        else
+            @warn "Local test data not found. Skipping identify_lambda real-data test."
+        end
     end
 
 end

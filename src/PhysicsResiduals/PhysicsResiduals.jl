@@ -26,4 +26,12 @@ export ResidualFeatures, LAMBDA_SIGN_CONSTRAINTS, LAMBDA_NON_IDENTIFIABILITY_NOT
        build_design_matrix, ResidualFeaturesDynamic, build_design_matrix_with_dynamic_term,
        assess_quasi_steady_adequacy
 
+# タスク2.1(LambdaIdentifier)で実装した公開名をexportする。
+# NormalFitSplitは、split_normal_dataだけが正規にfit部分集合を生成し、identify_lambdaは
+# この型のみを受理することで、異常データを直接渡せないようにする型安全性の要となる
+# (design.md LambdaIdentifier「Responsibilities & Constraints」、本ファイルの
+# NormalFitSplit/identify_lambdaのドキュメント参照)。
+export NormalFitSplit, ReactorCwLambda, PLAUSIBLE_TCW_IN_RANGE,
+       split_normal_data, identify_lambda, check_physical_plausibility
+
 end # module

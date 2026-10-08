@@ -29,7 +29,7 @@
   - _Boundary: ResidualFormula_
 
 - [ ] 2. Core: $\lambda$の同定と不確かさ検証
-- [ ] 2.1 正常データの分割と$\lambda$同定（LambdaIdentifier）
+- [x] 2.1 正常データの分割と$\lambda$同定（LambdaIdentifier）
   - `split_normal_data`関数（`simulationRun`基準、`fit_run_max=400`で重複なく分割）を実装する
   - `identify_lambda`関数（厳密OLSで$a,b$を同定し$T_{cw,in}$を導出）を実装する。入力の型シグネチャが異常データを受け取れないようにする
   - `check_physical_plausibility`関数（符号制約チェックと、$T_{cw,in}<T_{cw,out}$かつ妥当範囲内かのチェック）を実装する
