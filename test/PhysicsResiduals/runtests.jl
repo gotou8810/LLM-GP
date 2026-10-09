@@ -689,4 +689,352 @@ using .TEPDataLoader: load_rdata
         end
     end
 
+    # ========================================================================
+    # タスク3.1: 平均シフト型検知の実装(MeanShiftDetector、IDV4)
+    # Requirements: 4.1, 4.2, 4.3, 4.4, 4.5
+    # ========================================================================
+
+    """
+        _residual(lam, tr, tcw_out, u10)
+
+    タスク3.1のテスト用ヘルパー: lam=(a,b)を使って、単一行の反応器冷却水残差
+    |y - (a*x1 + b*x2)| (y=tr-tcw_out, x1=u10*tcw_out, x2=u10) を直接計算する。
+    `calibrate_threshold`/`detect_mean_shift`の実装が内部で呼ぶはずの
+    `build_design_matrix`+残差計算と独立に、期待値を手計算で求めるためのヘルパー。
+    """
+    function _residual(lam::PhysicsResiduals.ReactorCwLambda, tr::Float64, tcw_out::Float64, u10::Float64)
+        y = tr - tcw_out
+        x1 = u10 * tcw_out
+        x2 = u10
+        return abs(y - (lam.a * x1 + lam.b * x2))
+    end
+
+    """
+        _make_run_df(idv, run_id, samples, resid_at_sample; lam, tcw_out=94.6, u10=40.0)
+
+    タスク3.1のテスト用ヘルパー: 1ランの合成故障データを構築する。各サンプルについて、
+    `resid_at_sample(sample)`が返す値ちょうどの残差(非負)になるように`xmeas_9`を逆算する
+    (tcw_out, u10は全サンプルで一定値に固定し、x1, x2を定数にすることで、残差への
+    寄与をxmeas_9側の加算項だけに単純化する)。
+    """
+    function _make_run_df(idv::Int, run_id::Int, samples::Vector{Int}, resid_at_sample::Function;
+                           lam::PhysicsResiduals.ReactorCwLambda, tcw_out::Float64 = 94.6, u10::Float64 = 40.0)
+        n = length(samples)
+        x1 = u10 * tcw_out
+        x2 = u10
+        baseline = lam.a * x1 + lam.b * x2  # resid=0となる基準のa*x1+b*x2
+        xmeas_9 = Float64[tcw_out + baseline + resid_at_sample(s) for s in samples]
+        return DataFrame(
+            faultNumber = fill(idv, n),
+            simulationRun = fill(run_id, n),
+            sample = samples,
+            xmeas_9 = xmeas_9,
+            xmeas_21 = fill(tcw_out, n),
+            xmv_10 = fill(u10, n)
+        )
+    end
+
+    @testset "calibrate_threshold (正常保留データのみからFIT残差最大×1.25、Requirement 4.3)" begin
+        # design.md MeanShiftDetector Service Interface:
+        #   calibrate_threshold(lam, df_normal_holdout; margin=1.25)::Float64
+        # しきい値は「正常の検証データ(保留部分集合)のみから決定する」(Requirement 4.3)。
+        # calibrate_thresholdの引数にはdf_normal_holdoutしかなく、異常データへの
+        # 参照手段自体が存在しない(型シグネチャレベルでの保証、タスク2.1と同じ思想)。
+        lam = PhysicsResiduals.ReactorCwLambda(2.0, -60.0, 30.0, true, nothing)
+
+        tcw_out = 94.6
+        u10 = 40.0
+        x1 = u10 * tcw_out
+        x2 = u10
+        baseline = lam.a * x1 + lam.b * x2
+
+        # 既知の残差(|resid|)を持つ3行の合成holdoutデータ: 0.5, 1.0, 2.0 -> 最大2.0
+        resids = [0.5, 1.0, 2.0]
+        df_holdout = DataFrame(
+            simulationRun = [401, 402, 403],
+            xmeas_9 = Float64[tcw_out + baseline + r for r in resids],
+            xmeas_21 = fill(tcw_out, 3),
+            xmv_10 = fill(u10, 3)
+        )
+
+        threshold_default = PhysicsResiduals.calibrate_threshold(lam, df_holdout)
+        @test isapprox(threshold_default, maximum(resids) * 1.25; atol = 1e-9)
+
+        threshold_custom_margin = PhysicsResiduals.calibrate_threshold(lam, df_holdout; margin = 2.0)
+        @test isapprox(threshold_custom_margin, maximum(resids) * 2.0; atol = 1e-9)
+
+        # Requirement 4.3の「異常データを参照しない」ことを実装レベルで保証するため、
+        # df_normal_holdoutにfaultNumber != 0の行(異常データ由来)が含まれる場合は
+        # 明示的エラーで停止する(サイレントな受理ではない)
+        df_with_fault = DataFrame(
+            simulationRun = [401],
+            faultNumber = [4],
+            xmeas_9 = [tcw_out + baseline],
+            xmeas_21 = [tcw_out],
+            xmv_10 = [u10]
+        )
+        @test_throws ErrorException PhysicsResiduals.calibrate_threshold(lam, df_with_fault)
+
+        # margin<=0は物理的に無意味な閾値を生むため明示的エラー
+        @test_throws ErrorException PhysicsResiduals.calibrate_threshold(lam, df_holdout; margin = 0.0)
+    end
+
+    @testset "detect_mean_shift (しきい値超過/未超過の正しい判別)" begin
+        # design.md MeanShiftDetector Service Interface:
+        #   detect_mean_shift(lam, df, threshold)::Vector{Bool}
+        # 残差がしきい値を超える行のみtrueになること(どちらでも同じ値を返す自明な
+        # 実装ではないことを示す)。
+        lam = PhysicsResiduals.ReactorCwLambda(2.0, -60.0, 30.0, true, nothing)
+        tcw_out = 94.6
+        u10 = 40.0
+        x1 = u10 * tcw_out
+        x2 = u10
+        baseline = lam.a * x1 + lam.b * x2
+
+        # 残差: [1.0(未満), 5.0(超過), 3.0(ちょうどしきい値、超過ではない)]
+        threshold = 3.0
+        resids = [1.0, 5.0, 3.0]
+        df = DataFrame(
+            xmeas_9 = Float64[tcw_out + baseline + r for r in resids],
+            xmeas_21 = fill(tcw_out, 3),
+            xmv_10 = fill(u10, 3)
+        )
+
+        flags = PhysicsResiduals.detect_mean_shift(lam, df, threshold)
+        @test flags isa Vector{Bool}
+        @test flags == [false, true, false]
+        @test length(flags) == nrow(df)
+    end
+
+    """
+        _make_holdout_df(resids; lam, tcw_out=94.6, u10=40.0)
+
+    タスク3.1(remediation)のテスト用ヘルパー: `calibrate_threshold`/`evaluate_fault_detection`の
+    `df_normal_holdout`引数に渡す、既知の残差`resids`を持つ正常保留データを構築する。
+    """
+    function _make_holdout_df(resids::Vector{Float64}; lam::PhysicsResiduals.ReactorCwLambda,
+                               tcw_out::Float64 = 94.6, u10::Float64 = 40.0)
+        x1 = u10 * tcw_out
+        x2 = u10
+        baseline = lam.a * x1 + lam.b * x2
+        n = length(resids)
+        return DataFrame(
+            simulationRun = collect(401:(400 + n)),
+            xmeas_9 = Float64[tcw_out + baseline + r for r in resids],
+            xmeas_21 = fill(tcw_out, n),
+            xmv_10 = fill(u10, n)
+        )
+    end
+
+    @testset "evaluate_fault_detection (合成データ: FDR/ADD/FARの正しさ、投入時刻基準のADD)" begin
+        # design.md MeanShiftDetector Service Interface:
+        #   evaluate_fault_detection(lam, threshold, df_faulty, target_idvs)::DetectionMetrics
+        # Requirement 4.4: IDVごとのFDRと、投入時刻(サンプル21)基準の検知遅れ(ADD)を報告する。
+        # Requirement 4.5: FARを検知指標と区別して報告する。design.md MeanShiftDetector
+        # 「Responsibilities & Constraints」は「正常検証データ(保留部分集合)」という語を
+        # しきい値決定(4.3)に使っており、Requirement 4.5はこれを再利用する同じ語を使う。
+        # したがってFARはdf_faultyではなく、calibrate_thresholdに渡すのと同じholdout
+        # DataFrame(キーワード引数df_normal_holdout)から計算されなければならない
+        # (レビュー指摘: 以前の実装はdf_faultyの投入前ウィンドウという別データソースを
+        # 使っていた、という定義のすり替えへの修正)。
+        # Requirement 8.2: ADDはFAULT_INJECTION_SAMPLE(=21)を基準に計測し、ラン先頭からでは
+        # ない(findfirst(v->v>0, fault_col)のような常にサンプル1を返すバグを再導入しない)。
+        lam = PhysicsResiduals.ReactorCwLambda(2.0, -60.0, 30.0, true, nothing)
+        threshold = 3.0
+
+        samples = collect(1:30)
+
+        # IDV=77: 2ラン。サンプル1~20は残差0(正常同等)。サンプル25で初めて
+        # 残差10.0(閾値超過)が発生し、以降も超過が続く -> 検知遅れ = 25 - 21 = 4。
+        # (ここが本テストの核心: faultNumber列はラン全体で定数の77であり、
+        # findfirst(v -> v > 0, fault_col)のような実装は常にサンプル1(インデックス1)を
+        # 返してしまう誤り。真の投入時刻サンプル21を基準にすると、検知はサンプル25
+        # なので遅れは4であり、ラン先頭(サンプル1)からの遅れ24とは異なる値になる。)
+        resid_fn_detected(s) = s < 25 ? 0.0 : 10.0
+        run1 = _make_run_df(77, 1, samples, resid_fn_detected; lam = lam)
+        run2 = _make_run_df(77, 2, samples, resid_fn_detected; lam = lam)
+
+        # IDV=78: 1ラン。残差は常に0(投入後も含め、しきい値を一度も超えない) -> 未検知。
+        resid_fn_undetected(s) = 0.0
+        run3 = _make_run_df(78, 1, samples, resid_fn_undetected; lam = lam)
+
+        df_faulty = vcat(run1, run2, run3)
+
+        # holdoutはすべて残差0(しきい値3.0未満) -> far_pct=0%になるはず
+        df_holdout = _make_holdout_df(fill(0.0, 5); lam = lam)
+
+        metrics = PhysicsResiduals.evaluate_fault_detection(
+            lam, threshold, df_faulty, [77, 78, 99]; df_normal_holdout = df_holdout
+        )
+
+        @test metrics isa PhysicsResiduals.DetectionMetrics
+
+        # IDV77: 2ランとも検知 -> FDR=100%
+        @test isapprox(metrics.fdr_by_idv[77], 100.0; atol = 1e-9)
+        # 検知遅れはFAULT_INJECTION_SAMPLE(=21)基準でちょうど4(25-21)。
+        # ラン先頭(サンプル1)基準なら24になってしまうため、この一致はADD計算が
+        # 正しく投入時刻基準であることの直接的な証拠になる(Requirement 8.2の回帰防止)。
+        @test isapprox(metrics.add_by_idv[77], 4.0; atol = 1e-9)
+        @test metrics.add_by_idv[77] != 24.0
+
+        # IDV78: 1ランとも未検知 -> FDR=0%、ADDは「検知なし」のセンチネル値(-1.0、
+        # VerificationHarness.evaluate_fdiと同じ既存プロジェクト規約)
+        @test isapprox(metrics.fdr_by_idv[78], 0.0; atol = 1e-9)
+        @test metrics.add_by_idv[78] == -1.0
+
+        # IDV99: df_faultyに存在しない(評価不能) -> 欠損としてNaNで明示する
+        # (design.md Error Categories「評価不能」参照。他IDVの評価は継続している)
+        @test isnan(metrics.fdr_by_idv[99])
+        @test isnan(metrics.add_by_idv[99])
+
+        # FAR: df_normal_holdoutのすべての行の残差が0(しきい値未満)なので0%
+        @test isapprox(metrics.far_pct, 0.0; atol = 1e-9)
+    end
+
+    @testset "evaluate_fault_detection (合成データ: FARはdf_normal_holdoutのみに依存し、df_faultyの内容には依存しない)" begin
+        # レビュー指摘の核心を直接検証する: far_pctはdf_faultyの投入前ウィンドウ(古い実装の
+        # データソース)の内容が変わっても変化してはならず、df_normal_holdout(新しい・正しい
+        # データソース)の内容が変わると変化しなければならない。
+        lam = PhysicsResiduals.ReactorCwLambda(2.0, -60.0, 30.0, true, nothing)
+        threshold = 3.0
+        samples = collect(1:30)
+
+        # df_faultyの投入前ウィンドウ(sample=10)に、古い実装ならfar_pctを動かしていたはずの
+        # 誤報相当の残差(10.0 > threshold)を混入させる。投入後(>=21)は残差0のまま
+        # (検知自体はさせず、FAR計算の独立性のみを見る)。
+        resid_fn_preinjection_spike(s) = s == 10 ? 10.0 : 0.0
+        df_faulty = _make_run_df(80, 1, samples, resid_fn_preinjection_spike; lam = lam)
+
+        # Case 1: holdoutがすべて残差0(しきい値未満) -> far_pctは0%のはず。
+        # df_faultyの投入前ウィンドウに誤報相当の値を混入させていても、
+        # far_pctがholdoutのみから計算されていればこの値は変化しない。
+        df_holdout_clean = _make_holdout_df(fill(0.0, 5); lam = lam)
+        metrics_clean = PhysicsResiduals.evaluate_fault_detection(
+            lam, threshold, df_faulty, [80]; df_normal_holdout = df_holdout_clean
+        )
+        @test isapprox(metrics_clean.far_pct, 0.0; atol = 1e-9)
+
+        # Case 2: 同じdf_faultyのまま、holdoutの内容だけを変える(5点中1点がしきい値超過)。
+        # far_pctが変化すれば、実装が実際にdf_normal_holdoutを参照していることの直接的な証拠になる
+        # (シグネチャにdf_normal_holdoutが存在するだけの見せかけの実装ではないことの確認)。
+        df_holdout_noisy = _make_holdout_df([0.0, 0.0, 10.0, 0.0, 0.0]; lam = lam)
+        metrics_noisy = PhysicsResiduals.evaluate_fault_detection(
+            lam, threshold, df_faulty, [80]; df_normal_holdout = df_holdout_noisy
+        )
+        @test isapprox(metrics_noisy.far_pct, 20.0; atol = 1e-9)  # 1/5 * 100
+
+        # 投入後は残差0のままなので未検知(FDR=0%)であることも確認(FARと検知指標が
+        # 独立に計算されていることの確認、Requirement 4.5)
+        @test isapprox(metrics_clean.fdr_by_idv[80], 0.0; atol = 1e-9)
+        @test isapprox(metrics_noisy.fdr_by_idv[80], 0.0; atol = 1e-9)
+    end
+
+    @testset "evaluate_fault_detection (holdoutベースFARの0%-by-construction、開示された限界)" begin
+        # calibrate_thresholdが出力するthreshold(=max(|resid_holdout|)*margin, margin>1)を
+        # 同じholdoutに対してevaluate_fault_detectionへ渡すと、far_pctは構造的に常に0.0になる
+        # (detect_mean_shiftが厳密不等号resid > thresholdを使うため、holdout自身の最大残差でも
+        # 閾値を超えられない)。これはバグではなく、docstringに明記した開示済みの限界である。
+        lam = PhysicsResiduals.ReactorCwLambda(2.0, -60.0, 30.0, true, nothing)
+        df_holdout = _make_holdout_df([0.5, 1.0, 2.0]; lam = lam)
+        threshold = PhysicsResiduals.calibrate_threshold(lam, df_holdout)
+
+        samples = collect(1:30)
+        df_faulty = _make_run_df(81, 1, samples, s -> 0.0; lam = lam)
+
+        metrics = PhysicsResiduals.evaluate_fault_detection(
+            lam, threshold, df_faulty, [81]; df_normal_holdout = df_holdout
+        )
+        @test isapprox(metrics.far_pct, 0.0; atol = 1e-9)
+    end
+
+    @testset "evaluate_fault_detection (防御的チェック: df_normal_holdoutの要求と異常データ混入の拒否)" begin
+        # df_normal_holdoutは必須キーワード引数であり、省略するとUndefKeywordErrorになる
+        # (calibrate_thresholdの防御的チェックと同じ思想: サイレントなデフォルト値での
+        # 受理ではなく、呼び出し側の誤りを即座に検出する)。
+        lam = PhysicsResiduals.ReactorCwLambda(2.0, -60.0, 30.0, true, nothing)
+        threshold = 3.0
+        samples = collect(1:30)
+        df_faulty = _make_run_df(82, 1, samples, s -> 0.0; lam = lam)
+
+        @test_throws UndefKeywordError PhysicsResiduals.evaluate_fault_detection(
+            lam, threshold, df_faulty, [82]
+        )
+
+        # df_normal_holdoutにfaultNumber != 0の行(異常データ由来)が含まれる場合は、
+        # calibrate_thresholdと同じ理由で明示的エラーで停止する
+        df_holdout_with_fault = DataFrame(
+            simulationRun = [401],
+            faultNumber = [4],
+            xmeas_9 = [94.6 + lam.a * (40.0 * 94.6) + lam.b * 40.0],
+            xmeas_21 = [94.6],
+            xmv_10 = [40.0]
+        )
+        @test_throws ErrorException PhysicsResiduals.evaluate_fault_detection(
+            lam, threshold, df_faulty, [82]; df_normal_holdout = df_holdout_with_fault
+        )
+    end
+
+    @testset "evaluate_fault_detection (実データ: タスク3.1完了確認、IDV4)" begin
+        # タスク3.1の完了確認: 実際の異常データ(IDV4)に対しevaluate_fault_detectionを
+        # 実行すると、FDR・ADD・FAR付きの検知指標(DetectionMetrics)が返る。
+        #
+        # ランタイム抑制のため(タスク2.2の完了確認テストと同じ判断、STATUS REPORTの
+        # CONCERNSに記録): 正常データはfit側の先頭20run(run<=20)のみ、異常データ(IDV4)
+        # はsimulationRun<=20のみに絞り込む。RData.loadによる.RDataファイル自体の読み込み
+        # (正常データ約250,000行、異常データ約5,000,000行)はこの絞り込みの有無に関わらず
+        # 発生し時間を要するが、その後のlambda同定・しきい値計算・検知評価はこの絞り込みに
+        # より高速になる。
+        project_root = dirname(dirname(@__DIR__))
+        healthy_path = joinpath(project_root, "TEP_FaultFree_Training.RData")
+        faulty_path = joinpath(project_root, "TEP_Faulty_Training.RData")
+
+        if isfile(healthy_path) && isfile(faulty_path)
+            df_normal = load_rdata(healthy_path)
+            df_normal_small = filter(row -> row.simulationRun <= 40, df_normal)
+
+            split_fit = PhysicsResiduals.NormalFitSplit(filter(row -> row.simulationRun <= 20, df_normal_small))
+            df_holdout_small = filter(row -> row.simulationRun > 20, df_normal_small)
+
+            lam_raw = PhysicsResiduals.identify_lambda(split_fit)
+            lam = PhysicsResiduals.check_physical_plausibility(
+                lam_raw; tcw_out_mean = mean(split_fit.df.xmeas_21)
+            )
+
+            threshold = PhysicsResiduals.calibrate_threshold(lam, df_holdout_small)
+            @test threshold isa Float64
+            @test isfinite(threshold)
+            @test threshold > 0.0
+
+            # RData.load(faulty_path)自体(約5,000,000行)の読み込みに要する時間を
+            # 以下のwall-clock計測から除外するため、ロード完了後にt_startを置く
+            df_faulty_all = load_rdata(faulty_path)
+            df_faulty_idv4_small = filter(
+                row -> row.faultNumber == 4 && row.simulationRun <= 20, df_faulty_all
+            )
+            @test nrow(df_faulty_idv4_small) > 0
+
+            t_start = time()
+            metrics = PhysicsResiduals.evaluate_fault_detection(
+                lam, threshold, df_faulty_idv4_small, [4]; df_normal_holdout = df_holdout_small
+            )
+            elapsed = time() - t_start
+            @info "evaluate_fault_detection real-data wall-clock time (IDV4, 20 runs, excl. RData.load)" elapsed
+
+            @test metrics isa PhysicsResiduals.DetectionMetrics
+            @test haskey(metrics.fdr_by_idv, 4)
+            @test haskey(metrics.add_by_idv, 4)
+            @test 0.0 <= metrics.fdr_by_idv[4] <= 100.0
+            @test isfinite(metrics.far_pct)
+            @test 0.0 <= metrics.far_pct <= 100.0
+            # ADDが「検知なし」(-1.0)でない限り、FAULT_INJECTION_SAMPLE(=21)を基準とした
+            # 非負の遅れであるはず(ラン先頭基準の誤った実装なら、投入前のサンプルにも
+            # 反応してしまい、意味不明な値になりうる)
+            if metrics.add_by_idv[4] != -1.0
+                @test metrics.add_by_idv[4] >= 0.0
+            end
+        else
+            @warn "Local test data not found. Skipping evaluate_fault_detection real-data test."
+        end
+    end
+
 end

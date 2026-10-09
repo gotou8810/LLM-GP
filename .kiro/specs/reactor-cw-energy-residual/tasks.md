@@ -47,7 +47,7 @@
   - _Depends: 2.1_
 
 - [ ] 3. Core: 2経路の異常検知
-- [ ] 3.1 平均シフト型検知の実装（MeanShiftDetector、IDV4）
+- [x] 3.1 平均シフト型検知の実装（MeanShiftDetector、IDV4）
   - `calibrate_threshold`関数（正常保留データのみからFIT残差最大×1.25でしきい値を決定）を実装する
   - `detect_mean_shift`関数（残差系列の継続算出と検知フラグ）を実装する
   - `evaluate_fault_detection`関数（IDVごとのFDR・ADD・FAR算出、`FaultTiming.FAULT_INJECTION_SAMPLE`を基準とした検知遅れ計測）を実装する

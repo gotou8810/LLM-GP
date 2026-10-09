@@ -40,4 +40,11 @@ export NormalFitSplit, ReactorCwLambda, PLAUSIBLE_TCW_IN_RANGE,
 # (design.md LambdaValidator「Service Interface」参照)。
 export LambdaUncertainty, bootstrap_lambda_uncertainty, check_holdout_stability
 
+# タスク3.1(MeanShiftDetector)で実装した公開名をexportする。
+# calibrate_thresholdは正常検証データ(holdout)のみからしきい値を決定し(Requirement 4.3)、
+# detect_mean_shiftは凍結lambdaのもとで残差がしきい値を超えた行をフラグし(Requirement 4.1-4.2)、
+# evaluate_fault_detectionはFaultTiming.FAULT_INJECTION_SAMPLEを基準としたFDR・ADDと
+# FARをDetectionMetricsとして報告する(design.md MeanShiftDetector「Service Interface」参照)。
+export DetectionMetrics, calibrate_threshold, detect_mean_shift, evaluate_fault_detection
+
 end # module

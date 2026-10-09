@@ -862,3 +862,230 @@ function check_holdout_stability(lam::ReactorCwLambda, uncertainty::LambdaUncert
 
     return a_in_range && b_in_range && t_cw_in_in_range
 end
+
+# ============================================================================
+# MeanShiftDetector (design.md「検知」> MeanShiftDetector参照)
+#
+# 凍結lambdaのもとで残差 |y - (a*x1 + b*x2)| を継続算出し(Requirement 4.1)、
+# 正常検証データ(保留部分集合)のみから決定したしきい値(Requirement 4.3)を
+# 超えた場合に検知フラグを発する(Requirement 4.2)。IDV(4)に対する評価では、
+# FaultTiming.FAULT_INJECTION_SAMPLE(=21)を基準とした検知遅れとFDRを報告し
+# (Requirement 4.4)、正常検証データに対する誤報率(FAR)を検知指標とは区別して
+# 報告する(Requirement 4.5)。
+#
+# Requirements: 4.1, 4.2, 4.3, 4.4, 4.5
+# Depends: LambdaValidator (タスク2.2: 検証済みlambda), FaultTiming (タスク1.2:
+#          FAULT_INJECTION_SAMPLE)
+# ============================================================================
+
+"""
+    DetectionMetrics
+
+`evaluate_fault_detection`(MeanShiftDetector・VarianceShiftDetector共通)の戻り値。
+IDVごとのFDR・ADDと、全体のFARを保持するイミュータブルな値型
+(design.md MeanShiftDetector「State Management」のリテラル定義と一致)。
+
+# フィールド
+- `fdr_by_idv::Dict{Int,Float64}`: IDVごとの故障検知率(%)。対象IDVのデータが
+  `df_faulty`に1件も存在しない場合は、計算不能であることを明示するため`NaN`を保持する
+  (design.md Error Categories「評価不能」→当該IDVの`DetectionMetrics`に欠損を明示)。
+- `add_by_idv::Dict{Int,Float64}`: IDVごとの平均検知遅れ(サンプル数)。
+  `FaultTiming.FAULT_INJECTION_SAMPLE`からの相対値(Requirement 8.2)。
+  当該IDVのいずれのランでも検知がなかった場合は`-1.0`(`VerificationHarness.evaluate_fdi`の
+  既存規約`isempty(idv_delays[idv]) ? -1.0 : mean(...)`を踏襲した「検知なし」センチネル)。
+  データが存在しない場合(評価不能)は`fdr_by_idv`と同様に`NaN`。
+- `far_pct::Float64`: 正常検証データ(`split_normal_data`の保留部分集合、`evaluate_fault_detection`の
+  `df_normal_holdout`キーワード引数)に対する誤報率(%)。現行のmax×margin閾値決定方式のもとでは
+  構造的に`0.0`になる(`evaluate_fault_detection`のdocstring「開示すべき限界」参照)。
+"""
+struct DetectionMetrics
+    fdr_by_idv::Dict{Int,Float64}
+    add_by_idv::Dict{Int,Float64}
+    far_pct::Float64
+end
+
+"""
+    calibrate_threshold(lam, df_normal_holdout; margin=1.25)::Float64
+
+Requirement 4.3: 検知しきい値を、異常データを一切参照せず正常の検証データ
+(`split_normal_data`の保留部分集合)のみから決定する。
+
+\$\$\\text{threshold} = \\max_i \\left| y_i - (a\\,x_{1,i} + b\\,x_{2,i}) \\right| \\times \\text{margin}\$\$
+
+`src/VerificationHarness.jl`の既存規約(`threshold = maximum(model_resid_fit) * 1.25`、
+本ファイル137行目付近のコメント参照)と同じ「残差最大×1.25」という暫定規約
+(research.md「残差『第2の統計量』の設計」及びタスク3.1本文「FIT残差最大×1.25」参照)を
+踏襲する。ただし本関数は、design.mdのリテラルシグネチャが唯一のデータ引数として
+`df_normal_holdout`しか受け取らない(`VerificationHarness.jl`が`model_resid_fit`
+(同定に使ったfit部分集合の残差)を基準にしていたのとは異なり、本関数は常に
+holdout部分集合の残差を基準にする)という点で、`VerificationHarness.jl`の規約を
+一部拡張している。この拡張はRequirement 4.3の「正常の検証データのみから決定する」
+という字面と、design.mdの関数シグネチャ(異常データを渡す手段自体が存在しない)の
+両方に文字通り合致させるための意図的な選択である。
+
+- Preconditions: `df_normal_holdout`は`split_normal_data`の保留部分集合(またはそれに
+  相当する、異常データを含まない正常運転データ)
+- Postconditions: 返り値は常に正(`margin > 0`かつ残差は非負のため)
+- Invariants: 本関数は異常データを受け取る手段を持たない(関数シグネチャに
+  `df_normal_holdout::DataFrame`以外のデータ引数が存在しない)。さらに、
+  `df_normal_holdout`に`faultNumber`列が存在し、かつ0以外の値を含む場合は、
+  呼び出し側の誤り(異常データを誤って渡した)を早期に検出するため明示的エラーで
+  停止する(`docs/dataset_spec.md`で確認済みの事実: 正常データの`faultNumber`は
+  常に0であり、異常データのみが0以外の値を持つ)。
+"""
+function calibrate_threshold(lam::ReactorCwLambda, df_normal_holdout::DataFrame;
+                              margin::Float64 = 1.25)::Float64
+    if margin <= 0.0
+        error("calibrate_threshold: marginは正でなければなりません (margin=$margin)")
+    end
+    if hasproperty(df_normal_holdout, :faultNumber) && any(df_normal_holdout.faultNumber .!= 0)
+        error("calibrate_threshold: df_normal_holdoutに異常データ(faultNumber != 0の行)が" *
+              "含まれています。Requirement 4.3は閾値決定に異常データを参照しないことを要求します。")
+    end
+
+    feats = build_design_matrix(df_normal_holdout)
+    if isempty(feats.y)
+        error("calibrate_threshold: df_normal_holdoutに行がありません")
+    end
+
+    resid = abs.(feats.y .- (lam.a .* feats.x1 .+ lam.b .* feats.x2))
+    return maximum(resid) * margin
+end
+
+"""
+    detect_mean_shift(lam, df, threshold)::Vector{Bool}
+
+Requirement 4.1: 凍結された`lam`のもとで、`df`の各行について残差
+\$|y - (a\\,x_1 + b\\,x_2)|\$ を継続算出する。
+Requirement 4.2: 残差の大きさが`threshold`を**超えた**(厳密不等号、
+`VerificationHarness.jl`の`resid[t] > threshold`と同じ慣用句)場合に検知フラグ`true`を
+発する。
+
+戻り値は`df`と同じ行順序・同じ長さの`Vector{Bool}`であり、行ごとに独立な判定である
+(本関数自体はラン境界をまたぐ時間差分を取らないため、`respects_run_boundary`は
+不要。`build_design_matrix`と同じ代数的・行単位の残差計算であることに留意)。
+
+- Preconditions: `df`に`build_design_matrix`が要求する列(既定`:xmeas_9`, `:xmeas_21`,
+  `:xmv_10`)が存在する
+- Postconditions: `length(result) == nrow(df)`
+"""
+function detect_mean_shift(lam::ReactorCwLambda, df::DataFrame, threshold::Float64)::Vector{Bool}
+    feats = build_design_matrix(df)
+    resid = abs.(feats.y .- (lam.a .* feats.x1 .+ lam.b .* feats.x2))
+    return resid .> threshold
+end
+
+"""
+    evaluate_fault_detection(lam, threshold, df_faulty, target_idvs; df_normal_holdout)::DetectionMetrics
+
+Requirement 4.4: `target_idvs`の各IDVについて、故障検知率(FDR)と、
+`FaultTiming.FAULT_INJECTION_SAMPLE`(=21)を基準とした検知遅れ(ADD)を算出する。
+Requirement 4.5: 正常の検証データに対する誤報率(FAR)を、検知指標とは区別して
+(`DetectionMetrics`の別フィールドとして)報告する。
+Requirement 8.2: 検知遅れは各ランの先頭からではなく、`FAULT_INJECTION_SAMPLE`から
+計測する。`df_faulty`の`faultNumber`列はラン全体に付与された定数ラベルであり
+投入時刻そのものではない(`docs/dataset_spec.md`)ため、`VerificationHarness.jl`の
+既知バグ(`findfirst(v -> v > 0, fault_col)`が常にサンプル1を返す)を再導入しない。
+Requirement 8.3: ラン境界をまたいで残差・検知を計算しない(`faultNumber`・
+`simulationRun`でグループ化してからラン内でのみサンプル順に処理する)。
+
+# FARの算出方法に関する設計判断(レビュー指摘への修正、CONCERNSに記録)
+design.md MeanShiftDetector「Responsibilities & Constraints」は、Requirement 4.3の
+しきい値決定について「正常検証データ(保留部分集合)のみから決定する」と明記しており、
+Requirement 4.5が再利用する「正常の検証データ」という字句も、design.mdの確立済みの
+語法に従えば同じ`split_normal_data`の保留部分集合(holdout)を指す。以前の実装は
+`df_faulty`の投入前ウィンドウ(`sample < FAULT_INJECTION_SAMPLE`)という、holdoutとは
+別のデータソースからFARを計算していたが、これはdesign.mdが確立した用語を無断で
+読み替えるものであり、レビューで指摘された。
+
+本実装はタスク2.1/2.2(`identify_lambda(df_fit::NormalFitSplit)`がdesign.mdの
+リテラルな`identify_lambda(df_fit::DataFrame)`を拡張した前例)と同じ考え方で、
+`evaluate_fault_detection`のシグネチャにキーワード引数`df_normal_holdout::DataFrame`
+(`calibrate_threshold`が受け取るholdoutと同一のデータ)を追加し、`far_pct`を
+`detect_mean_shift(lam, df_normal_holdout, threshold)`の結果から直接計算する。
+これにより、design.mdが「正常検証データ」と呼ぶものを文字通りholdoutとして扱い、
+Requirement 4.5を字面どおりに満たす。
+
+## 開示すべき限界: holdoutベースのFARは、現行の閾値決定方式のもとでは構造的に0%になる
+`calibrate_threshold`は`threshold = max(|resid_holdout|) * margin`(`margin > 1`)として
+しきい値を定義し、`detect_mean_shift`は厳密不等号`resid > threshold`で検知を判定する。
+したがって、`threshold`が`df_normal_holdout`自身の残差最大値にmarginを掛けた値である
+以上、`df_normal_holdout`のどの行の残差も自分自身の最大値×margin(`margin>1`)を
+超えることは数学的にあり得ず、`far_pct`は常に`0.0`になる。これはバグではなく、
+現行のmax×margin閾値決定方式(research.md参照、`fdi-evaluation-foundation`での
+パーセンタイル方式再検討の対象)の必然的な性質である。この0%という値は「誤報が
+実際に発生しなかった」ことの検証済みの証拠ではなく、「このしきい値決定方式のもとでは
+定義上誤報が発生しえない」という解釈上の限界として読むべきである
+(CLAUDE.md §8/Requirement 9: 学術的誠実さと限界の記録)。異常データを参照しない
+という制約(Requirement 2.3/4.3)を保ったまま、より情報量のあるFAR値を得るには、
+`fdi-evaluation-foundation`が確立するパーセンタイル等の別の閾値決定方針が必要になる
+(design.md「Revalidation Triggers」参照)。
+
+- Preconditions: `threshold`は`calibrate_threshold`の出力(異常データを一切
+  参照していない)。`df_normal_holdout`は`calibrate_threshold`に渡したholdoutと
+  同一(またはそれに相当する、異常データを含まない正常運転データ)であることを
+  想定する。`calibrate_threshold`と同じ防御的チェック(`faultNumber`列が存在し
+  0以外の値を含む場合は明示的エラーで停止)を行う
+- Postconditions: `target_idvs`のいずれかが`df_faulty`に1件も存在しない場合、
+  当該IDVの`fdr_by_idv`・`add_by_idv`は`NaN`(評価不能の明示、design.md Error
+  Categories参照)。`add_by_idv`の値は`FaultTiming.FAULT_INJECTION_SAMPLE`からの
+  相対値である。`far_pct`は`df_normal_holdout`のみから計算され、`df_faulty`の
+  内容(投入前ウィンドウを含む)には一切依存しない
+"""
+function evaluate_fault_detection(lam::ReactorCwLambda, threshold::Float64, df_faulty::DataFrame,
+                                   target_idvs::Vector{Int};
+                                   df_normal_holdout::DataFrame)::DetectionMetrics
+    for col in (:faultNumber, :simulationRun, :sample)
+        if !hasproperty(df_faulty, col)
+            error("evaluate_fault_detection: df_faultyに必要な列 '$(col)' が存在しません")
+        end
+    end
+    if hasproperty(df_normal_holdout, :faultNumber) && any(df_normal_holdout.faultNumber .!= 0)
+        error("evaluate_fault_detection: df_normal_holdoutに異常データ(faultNumber != 0の行)が" *
+              "含まれています。Requirement 4.5は正常の検証データ(holdout)のみからFARを" *
+              "決定することを要求します。")
+    end
+
+    df_sorted = sort(df_faulty, [:faultNumber, :simulationRun, :sample])
+
+    fdr_by_idv = Dict{Int,Float64}()
+    add_by_idv = Dict{Int,Float64}()
+
+    for idv in target_idvs
+        df_idv = filter(row -> row.faultNumber == idv, df_sorted)
+
+        if nrow(df_idv) == 0
+            fdr_by_idv[idv] = NaN
+            add_by_idv[idv] = NaN
+            continue
+        end
+
+        total_runs = 0
+        detected_runs = 0
+        delays = Float64[]
+
+        for g in groupby(df_idv, :simulationRun)
+            total_runs += 1
+            g_df = DataFrame(g)  # SubDataFrameをbuild_design_matrix/detect_mean_shiftに
+                                  # 渡せる具体的なDataFrameへ変換する(型シグネチャの整合)
+            samples = g_df.sample
+            flags = detect_mean_shift(lam, g_df, threshold)
+
+            post_idx = findall(s -> s >= FAULT_INJECTION_SAMPLE, samples)
+            detect_pos = isempty(post_idx) ? nothing : findfirst(identity, flags[post_idx])
+            if detect_pos !== nothing
+                detect_sample = samples[post_idx[detect_pos]]
+                push!(delays, Float64(detect_sample - FAULT_INJECTION_SAMPLE))
+                detected_runs += 1
+            end
+        end
+
+        fdr_by_idv[idv] = detected_runs / total_runs * 100.0
+        add_by_idv[idv] = isempty(delays) ? -1.0 : mean(delays)
+    end
+
+    far_flags = detect_mean_shift(lam, df_normal_holdout, threshold)
+    far_pct = isempty(far_flags) ? NaN : (count(identity, far_flags) / length(far_flags) * 100.0)
+
+    return DetectionMetrics(fdr_by_idv, add_by_idv, far_pct)
+end
