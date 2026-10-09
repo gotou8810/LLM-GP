@@ -34,4 +34,10 @@ export ResidualFeatures, LAMBDA_SIGN_CONSTRAINTS, LAMBDA_NON_IDENTIFIABILITY_NOT
 export NormalFitSplit, ReactorCwLambda, PLAUSIBLE_TCW_IN_RANGE,
        split_normal_data, identify_lambda, check_physical_plausibility
 
+# タスク2.2(LambdaValidator)で実装した公開名をexportする。
+# bootstrap_lambda_uncertaintyはidentify_lambdaをラン単位の復元抽出標本に繰り返し適用し、
+# check_holdout_stabilityはholdoutでの再同定結果がその信頼区間内かを判定する
+# (design.md LambdaValidator「Service Interface」参照)。
+export LambdaUncertainty, bootstrap_lambda_uncertainty, check_holdout_stability
+
 end # module

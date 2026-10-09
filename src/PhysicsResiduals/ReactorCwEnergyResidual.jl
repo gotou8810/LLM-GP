@@ -19,6 +19,7 @@
 
 using DataFrames
 using Statistics
+using Random
 
 # FaultTimingはdesign.md「Components and Interfaces」でTEPDataLoaderをP0依存として
 # 明記している(実データでの投入時刻サニティチェックのため)。本ファイルはPhysicsResiduals.jl
@@ -657,4 +658,207 @@ function check_physical_plausibility(lam::ReactorCwLambda; tcw_out_mean::Float64
     end
 
     return ReactorCwLambda(lam.a, lam.b, lam.t_cw_in, true, nothing)
+end
+
+# ============================================================================
+# LambdaValidator (design.md「同定・検証」> LambdaValidator参照)
+#
+# 同定されたlambdaの不確かさ(ブートストラップ信頼区間)を定量化し(Requirement 3.1)、
+# holdout部分集合で再同定したlambdaがその信頼区間内に収まるかを判定する
+# (Requirement 3.2)。収まらない場合はlambdaを不安定(検知用途にまだ採用できない)
+# とフラグする(Requirement 3.3)。
+#
+# Requirements: 3.1, 3.2, 3.3
+# Depends: LambdaIdentifier (タスク2.1: identify_lambda, NormalFitSplit, ReactorCwLambda,
+#          split_normal_data)
+# ============================================================================
+
+"""
+    LambdaUncertainty
+
+`bootstrap_lambda_uncertainty`の戻り値。lambda=(a, b)と、そこから導出される
+T_cw,inについて、ブートストラップ信頼区間(既定95%)を保持するイミュータブルな値型
+(design.md LambdaValidator「State Management」のリテラル定義と一致)。
+
+# フィールド
+- `a_ci::Tuple{Float64,Float64}`: aの信頼区間 (下端, 上端)
+- `b_ci::Tuple{Float64,Float64}`: bの信頼区間 (下端, 上端)
+- `t_cw_in_ci::Tuple{Float64,Float64}`: T_cw,inの信頼区間 (下端, 上端)
+"""
+struct LambdaUncertainty
+    a_ci::Tuple{Float64,Float64}
+    b_ci::Tuple{Float64,Float64}
+    t_cw_in_ci::Tuple{Float64,Float64}
+end
+
+"""
+    _resample_runs_with_replacement(df, run_col; rng=Random.default_rng())::DataFrame
+
+design.md LambdaValidator「Responsibilities & Constraints」の
+「リサンプリングはラン単位で行い、ラン内の時系列相関を壊さない」(Requirement 3.1の
+実装制約)を実現する、ラン単位ブロックブートストラップのリサンプリング本体。
+
+`df`に含まれる一意な`run_col`値(例: `simulationRun`)の集合から、元と同じ個数だけ
+**run全体**を復元抽出する(個々の行を抽出するのではない)。抽出された各runについて、
+そのrunに属するすべての行を、`df`における元の行順序を保ったまま連結して返す。
+
+これにより:
+- 各runの内部時系列構造(サンプル順序、ラグ関係)はリサンプル後も完全に保たれる
+  (行単位ブートストラップであれば破壊される)
+- あるrunが0回・1回・複数回選ばれることで、run間のばらつきがブートストラップ標本に反映される
+
+`identify_lambda`に(`NormalFitSplit`でラップして)渡すことで、run単位リサンプリングに
+基づく\$\\lambda\$のブートストラップ分布を得られる(`bootstrap_lambda_uncertainty`参照)。
+
+- Preconditions: `df`に`run_col`列が存在する
+- Postconditions: 戻り値の行数は、選ばれた各runの元の行数の合計に等しい
+  (runを部分的に切り出すことはない)
+"""
+function _resample_runs_with_replacement(df::DataFrame, run_col::Symbol;
+                                          rng::Random.AbstractRNG = Random.default_rng())::DataFrame
+    if !hasproperty(df, run_col)
+        error("_resample_runs_with_replacement: dfに必要な列 '$(run_col)' が存在しません")
+    end
+
+    run_ids = unique(df[!, run_col])
+    row_indices_by_run = Dict(id => findall(==(id), df[!, run_col]) for id in run_ids)
+
+    sampled_ids = rand(rng, run_ids, length(run_ids))
+
+    idx = Int[]
+    for id in sampled_ids
+        append!(idx, row_indices_by_run[id])
+    end
+
+    return df[idx, :]
+end
+
+"""
+    bootstrap_lambda_uncertainty(df_fit::NormalFitSplit; n_resamples=200, confidence=0.95,
+                                  run_col=:simulationRun, rng=Random.default_rng())::LambdaUncertainty
+
+Requirement 3.1: 同定されたlambdaの各要素(a, b, T_cw,in)について、ラン単位ブロック
+ブートストラップによる不確かさ(既定95%信頼区間、パーセンタイル法)を算出する。
+
+# 方法
+1. `_resample_runs_with_replacement`で、`df_fit.df`からラン単位の復元抽出標本を
+   `n_resamples`回生成する(各標本はラン内の時系列相関を保つ、`run_col`既定`:simulationRun`)。
+2. 各標本を`NormalFitSplit`でラップし、`identify_lambda`(タスク2.1、`LambdaIdentifier`の
+   同定ロジックをそのまま再利用)を適用してa, b, T_cw,in=-b/aを得る。
+3. 得られた`n_resamples`組の(a, b, T_cw,in)から、パーセンタイル法で
+   `confidence`(既定0.95)信頼区間を各要素について算出する:
+   下端 = 標本の`(1-confidence)/2`分位点、上端 = `1-(1-confidence)/2`分位点。
+
+# 型安全性に関する設計判断(design.mdのリテラルシグネチャ`df_fit::DataFrame`からの拡張)
+design.mdのLambdaValidator Service Interfaceは`df_fit::DataFrame`と記載しているが、
+同Preconditionsは「`df_fit`は`LambdaIdentifier.split_normal_data`の同定用部分集合と
+同一であること」と定める。タスク2.1の型安全性拡張により`split_normal_data`の
+第1戻り値は実際には`NormalFitSplit`であるため、本関数も`identify_lambda`と同じ
+`NormalFitSplit`型のみを受理することで、「同定用部分集合と同一」という前提を
+呼び出し経路のレベルで保証する(タスク2.1で認められた拡張パターンをそのまま踏襲)。
+内部で各ブートストラップ標本(生DataFrame)を`NormalFitSplit`でラップして
+`identify_lambda`に渡すのは、呼び出し元のテストスイート補助ヘルパーとは別に、
+本関数自身の責務である。
+
+`run_col`・`rng`はdesign.mdのリテラルシグネチャにはないが、ラン単位リサンプリングの
+実装(Requirement 3.1の制約)と再現性確保のために追加したキーワード引数(開示済みの
+拡張)である。
+
+# 数値的頑健性
+極端に不運なリサンプリング標本(例: 単一runが支配的に選ばれ説明変数が退化する)では、
+`identify_lambda`内部の`a==0.0`チェックがエラーを発する場合がある。これは個々の
+ブートストラップ標本の失敗として扱い、該当標本のみをスキップする
+(値そのもののサイレントなNaN伝播ではなく、"どの標本が、なぜ失敗したか"が
+明確なエラー経路からの意図的なスキップであり、`build_design_matrix`等の
+「列が存在しない場合は明示的エラー」という方針とは別の、統計的推定における
+標準的なブートストラップ失敗標本の除外処理である)。
+
+- Preconditions: `n_resamples >= 2`, `0 < confidence < 1`
+- Postconditions: 有効な標本が2件未満の場合は明示的エラーで停止する
+"""
+function bootstrap_lambda_uncertainty(df_fit::NormalFitSplit; n_resamples::Int = 200,
+                                       confidence::Float64 = 0.95,
+                                       run_col::Symbol = :simulationRun,
+                                       rng::Random.AbstractRNG = Random.default_rng())::LambdaUncertainty
+    if n_resamples < 2
+        error("bootstrap_lambda_uncertainty: n_resamplesは2以上でなければなりません (n_resamples=$n_resamples)")
+    end
+    if !(0.0 < confidence < 1.0)
+        error("bootstrap_lambda_uncertainty: confidenceは(0,1)の範囲でなければなりません (confidence=$confidence)")
+    end
+
+    df = df_fit.df
+
+    a_samples = Float64[]
+    b_samples = Float64[]
+    t_cw_in_samples = Float64[]
+
+    for _ in 1:n_resamples
+        resampled_df = _resample_runs_with_replacement(df, run_col; rng = rng)
+        try
+            lam = identify_lambda(NormalFitSplit(resampled_df))
+            if isfinite(lam.a) && isfinite(lam.b) && isfinite(lam.t_cw_in)
+                push!(a_samples, lam.a)
+                push!(b_samples, lam.b)
+                push!(t_cw_in_samples, lam.t_cw_in)
+            end
+        catch e
+            if !(e isa ErrorException)
+                rethrow(e)
+            end
+            # identify_lambdaが明示的エラーを発した標本(例: a==0.0で退化した説明変数)を
+            # スキップする(上記docstring「数値的頑健性」参照)。
+        end
+    end
+
+    if length(a_samples) < 2
+        error("bootstrap_lambda_uncertainty: 有効なブートストラップ標本が不足しています " *
+              "(有効標本数=$(length(a_samples)), n_resamples=$n_resamples)")
+    end
+
+    alpha = 1.0 - confidence
+    lo_q = alpha / 2.0
+    hi_q = 1.0 - alpha / 2.0
+
+    a_ci = (quantile(a_samples, lo_q), quantile(a_samples, hi_q))
+    b_ci = (quantile(b_samples, lo_q), quantile(b_samples, hi_q))
+    t_cw_in_ci = (quantile(t_cw_in_samples, lo_q), quantile(t_cw_in_samples, hi_q))
+
+    return LambdaUncertainty(a_ci, b_ci, t_cw_in_ci)
+end
+
+"""
+    check_holdout_stability(lam::ReactorCwLambda, uncertainty::LambdaUncertainty,
+                             df_holdout::DataFrame)::Bool
+
+Requirement 3.2: holdout部分集合(`split_normal_data`の第2戻り値、`LambdaIdentifier`の
+同定には使われていないデータ)で\$\\lambda\$を再同定し、`bootstrap_lambda_uncertainty`が
+fit部分集合から算出した信頼区間(`uncertainty`)内に収まるかを判定する。
+
+Requirement 3.3: a, b, T_cw,inのいずれか1つでも信頼区間外であれば`false`を返す
+(呼び出し元は\$\\lambda\$を不安定とみなし、検知用途に採用してはならない、design.md
+LambdaValidator「Postconditions」参照)。すべてが信頼区間内であれば`true`を返す。
+
+`df_holdout`は`split_normal_data`の第2戻り値そのままの生`DataFrame`(design.mdの
+リテラルシグネチャ、およびタスク2.1でholdout側がラップされない設計と整合)であり、
+本関数内部で`NormalFitSplit`にラップして`identify_lambda`に渡す(「holdout部分集合で
+\$\\lambda\$を再同定する」という責務を本関数が担う)。
+
+`lam`(fit時に凍結された\$\\lambda\$)は、design.mdのService Interface契約を満たすために
+受理するが、安定性判定自体はholdoutでの再同定結果と`uncertainty`の比較のみに基づく
+(`uncertainty`自体がfit時の`lam`と同じfit部分集合から計算されているため、`lam`の値は
+暗黙にこの比較へ反映されている)。
+
+- Preconditions: `uncertainty`は同じfit部分集合に対する`bootstrap_lambda_uncertainty`の出力
+- Postconditions: `false`が返る場合、呼び出し元は\$\\lambda\$を検知用途に採用してはならない
+"""
+function check_holdout_stability(lam::ReactorCwLambda, uncertainty::LambdaUncertainty,
+                                  df_holdout::DataFrame)::Bool
+    lam_holdout = identify_lambda(NormalFitSplit(df_holdout))
+
+    a_in_range = uncertainty.a_ci[1] <= lam_holdout.a <= uncertainty.a_ci[2]
+    b_in_range = uncertainty.b_ci[1] <= lam_holdout.b <= uncertainty.b_ci[2]
+    t_cw_in_in_range = uncertainty.t_cw_in_ci[1] <= lam_holdout.t_cw_in <= uncertainty.t_cw_in_ci[2]
+
+    return a_in_range && b_in_range && t_cw_in_in_range
 end

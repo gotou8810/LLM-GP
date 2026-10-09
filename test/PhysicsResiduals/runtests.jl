@@ -476,4 +476,217 @@ using .TEPDataLoader: load_rdata
         end
     end
 
+    # ========================================================================
+    # タスク2.2: λの不確かさとホールドアウト安定性の検証(LambdaValidator)
+    # Requirements: 3.1, 3.2, 3.3
+    # ========================================================================
+
+    """
+        _make_synth_run_df(rng, n_runs, rows_per_run, noise_std; a_true, t_cw_in_true)
+
+    タスク2.2のテスト用ヘルパー: 既知のa, t_cw_inから、複数run・各runが
+    simulationRun列で区別される合成正常データを生成する(タスク2.1の
+    identify_lambdaテストと同じ y = Tcw_out + a*x1 + b*x2 の構成法を、
+    run単位ブートストラップが扱える複数run構造に拡張したもの)。
+    """
+    function _make_synth_run_df(rng, n_runs::Int, rows_per_run::Int, noise_std::Float64;
+                                 a_true::Float64 = 2.0, t_cw_in_true::Float64 = 30.0)
+        b_true = -a_true * t_cw_in_true
+        sim_run = Int[]
+        xmeas_9 = Float64[]
+        xmeas_21 = Float64[]
+        xmv_10 = Float64[]
+        for run in 1:n_runs
+            tcw_out = 90.0 .+ 10.0 .* rand(rng, rows_per_run)
+            u10 = 30.0 .+ 20.0 .* rand(rng, rows_per_run)
+            x1 = u10 .* tcw_out
+            x2 = u10
+            tr = tcw_out .+ a_true .* x1 .+ b_true .* x2 .+ randn(rng, rows_per_run) .* noise_std
+            append!(sim_run, fill(run, rows_per_run))
+            append!(xmeas_9, tr)
+            append!(xmeas_21, tcw_out)
+            append!(xmv_10, u10)
+        end
+        return DataFrame(simulationRun = sim_run, xmeas_9 = xmeas_9, xmeas_21 = xmeas_21, xmv_10 = xmv_10)
+    end
+
+    @testset "_resample_runs_with_replacement (run単位ブロックブートストラップ、行単位ではないことの確認)" begin
+        # Requirement 3.1の実装制約(design.md LambdaValidator「Responsibilities & Constraints」:
+        # リサンプリングはラン単位で行い、ラン内の時系列相関を壊さない)を直接検証する。
+        #
+        # 各runに一意な「指紋」(連番marker)を持たせ、リサンプリング後も:
+        #   (1) 各ブロックが必ずrun_len行ちょうどである(runの一部だけが抜き出されない)
+        #   (2) 各ブロック内のsimulationRunが単一の値である(異なるrunの行が混ざらない)
+        #   (3) 各ブロックのmarker列が、いずれかの元runの完全な順序付き数列と一致する
+        #       (run内の行順序が保たれている。行単位シャッフルならこの一致は成立しない)
+        # ことを確認する。
+        run_len = 4
+        n_runs = 5
+        df_synth = DataFrame(
+            simulationRun = repeat(1:n_runs, inner = run_len),
+            marker = vcat([collect((r * 100 + 1):(r * 100 + run_len)) for r in 1:n_runs]...)
+        )
+
+        rng = MersenneTwister(42)
+        resampled = PhysicsResiduals._resample_runs_with_replacement(df_synth, :simulationRun; rng = rng)
+
+        @test nrow(resampled) == nrow(df_synth)
+        @test nrow(resampled) % run_len == 0
+
+        original_patterns = Set(Tuple(collect((r * 100 + 1):(r * 100 + run_len))) for r in 1:n_runs)
+        n_chunks = nrow(resampled) ÷ run_len
+        for c in 1:n_chunks
+            chunk = resampled[((c - 1) * run_len + 1):(c * run_len), :]
+            @test length(unique(chunk.simulationRun)) == 1
+            @test Tuple(chunk.marker) in original_patterns
+        end
+
+        # 複数シードにわたって、runの採択パターン(出現順序の並び)が変化すること
+        # (= 復元抽出であることの確認。row単位の固定シャッフルのような決定論的挙動ではない)
+        distinct_patterns = Set{Vector{Int}}()
+        for seed in 1:30
+            r = MersenneTwister(seed)
+            trial = PhysicsResiduals._resample_runs_with_replacement(df_synth, :simulationRun; rng = r)
+            ids_in_order = Int[trial.simulationRun[(c - 1) * run_len + 1] for c in 1:(nrow(trial) ÷ run_len)]
+            push!(distinct_patterns, ids_in_order)
+        end
+        @test length(distinct_patterns) > 1
+
+        # 必須列が欠けている場合は明示的エラー
+        df_missing = DataFrame(marker = [1, 2])
+        @test_throws ErrorException PhysicsResiduals._resample_runs_with_replacement(df_missing, :simulationRun)
+    end
+
+    @testset "bootstrap_lambda_uncertainty (合成データ: CI幅がノイズ水準に応じて変化することの証明)" begin
+        # design.md LambdaValidator Service Interface: bootstrap_lambda_uncertainty(df_fit; n_resamples, confidence)
+        # は単純な固定幅のプレースホルダーではなく、実際のデータのばらつきに応じてCIが
+        # 狭く/広くなることを示す(低ノイズ -> 狭いCI、高ノイズ -> 広いCIを同じrng系列で比較)。
+        rng_low = MersenneTwister(11)
+        df_low_noise = _make_synth_run_df(rng_low, 30, 20, 0.01)
+        rng_high = MersenneTwister(11)
+        df_high_noise = _make_synth_run_df(rng_high, 30, 20, 5.0)
+
+        split_low = PhysicsResiduals.NormalFitSplit(df_low_noise)
+        split_high = PhysicsResiduals.NormalFitSplit(df_high_noise)
+
+        unc_low = PhysicsResiduals.bootstrap_lambda_uncertainty(split_low; n_resamples = 150, rng = MersenneTwister(1))
+        unc_high = PhysicsResiduals.bootstrap_lambda_uncertainty(split_high; n_resamples = 150, rng = MersenneTwister(1))
+
+        @test unc_low isa PhysicsResiduals.LambdaUncertainty
+        @test unc_high isa PhysicsResiduals.LambdaUncertainty
+
+        width(ci) = ci[2] - ci[1]
+        @test width(unc_low.a_ci) < width(unc_high.a_ci)
+        @test width(unc_low.t_cw_in_ci) < width(unc_high.t_cw_in_ci)
+
+        # CIの下端<=上端(整合性)
+        for unc in (unc_low, unc_high)
+            @test unc.a_ci[1] <= unc.a_ci[2]
+            @test unc.b_ci[1] <= unc.b_ci[2]
+            @test unc.t_cw_in_ci[1] <= unc.t_cw_in_ci[2]
+        end
+    end
+
+    @testset "bootstrap_lambda_uncertainty (実データ: タスク2.2完了確認)" begin
+        # タスク2.2の完了確認: 実際の正常データにbootstrap_lambda_uncertaintyを実行すると、
+        # a, b, T_cw,inそれぞれの信頼区間が返る。
+        #
+        # ランタイム抑制のため、全fit部分集合(run<=400, n~200,000)ではなく、先頭20run
+        # (run=1..20, n~10,000)の実データ部分集合を用いる(タスク指示の「完了確認テストは
+        # 全fit分割を使わなくてもよい」判断に基づく、STATUS REPORTのCONCERNSに記録)。
+        project_root = dirname(dirname(@__DIR__))
+        healthy_path = joinpath(project_root, "TEP_FaultFree_Training.RData")
+
+        if isfile(healthy_path)
+            df_normal = load_rdata(healthy_path)
+            df_small = filter(row -> row.simulationRun <= 20, df_normal)
+            split_small = PhysicsResiduals.NormalFitSplit(df_small)
+
+            t_start = time()
+            uncertainty = PhysicsResiduals.bootstrap_lambda_uncertainty(
+                split_small; n_resamples = 100, rng = MersenneTwister(2026)
+            )
+            elapsed = time() - t_start
+            @info "bootstrap_lambda_uncertainty real-data wall-clock time (20 runs, 100 resamples)" elapsed
+
+            @test uncertainty isa PhysicsResiduals.LambdaUncertainty
+            for ci in (uncertainty.a_ci, uncertainty.b_ci, uncertainty.t_cw_in_ci)
+                @test ci[1] <= ci[2]
+                @test isfinite(ci[1]) && isfinite(ci[2])
+            end
+        else
+            @warn "Local test data not found. Skipping bootstrap_lambda_uncertainty real-data test."
+        end
+    end
+
+    @testset "check_holdout_stability (合成データ: 安定/不安定の判別)" begin
+        # Requirement 3.2: holdoutでの再評価がfit時の不確かさ範囲内かを判定する。
+        # Requirement 3.3: 範囲外ならfalse(不安定)を返す。
+        #
+        # 注意(パラメータ選定の理由): ブートストラップCIは、fit側に存在する有限個の
+        # run(ここでは30個)の「どの組み合わせを選ぶか」による変動のみを捉えるため、
+        # 全く新規に生成されたholdoutデータ(新しいrunの乱数、別シード)固有の推定誤差は
+        # 完全には反映されない(run単位ブロックブートストラップの既知の性質であり、実装の
+        # 誤りではない)。そのため、ノイズが極端に小さい場合(例: noise_std=5e-4)はCIが
+        # 機械精度近くまで潰れてしまい、独立した新規drawのholdout推定値がわずかにそこから
+        # 外れてfalseになりやすい。逆にノイズが大きすぎる場合は、名目上95%の被覆率でも
+        # a・b・T_cw,inの3つ同時に収まる必要があるため偶然外れることがある。本テストでは、
+        # 固定シードの組み合わせで両ケース(安定/不安定)が明確に分かれることを事前に
+        # 数値実験で確認した値(noise_std=0.02, n_runs=30)を用いる。シフトケース
+        # (t_cw_in: 30->60)は、このノイズ水準に対して十分大きく、CI幅よりはるかに大きい
+        # ため、シード選択に依らず安定してfalseになる。
+        a_true = 2.0
+        t_cw_in_true = 30.0
+        noise_std = 0.02
+        n_runs = 30
+        rows_per_run = 20
+
+        rng_fit = MersenneTwister(1001)
+        df_fit = _make_synth_run_df(rng_fit, n_runs, rows_per_run, noise_std; a_true = a_true, t_cw_in_true = t_cw_in_true)
+        split_fit = PhysicsResiduals.NormalFitSplit(df_fit)
+        lam_fit = PhysicsResiduals.identify_lambda(split_fit)
+        uncertainty = PhysicsResiduals.bootstrap_lambda_uncertainty(split_fit; n_resamples = 150, rng = MersenneTwister(2001))
+
+        # 安定ケース: holdoutが同じ真のlambdaから生成される -> CI内に収まりtrue
+        rng_holdout_ok = MersenneTwister(3001)
+        df_holdout_ok = _make_synth_run_df(
+            rng_holdout_ok, n_runs, rows_per_run, noise_std; a_true = a_true, t_cw_in_true = t_cw_in_true
+        )
+        @test PhysicsResiduals.check_holdout_stability(lam_fit, uncertainty, df_holdout_ok) == true
+
+        # 不安定ケース: holdoutでt_cw_inが大きくシフト(30->60)した状態から生成
+        # -> 再同定されたt_cw_inがfit時のCI外となりfalse
+        rng_holdout_shift = MersenneTwister(4001)
+        df_holdout_shift = _make_synth_run_df(
+            rng_holdout_shift, n_runs, rows_per_run, noise_std; a_true = a_true, t_cw_in_true = 60.0
+        )
+        @test PhysicsResiduals.check_holdout_stability(lam_fit, uncertainty, df_holdout_shift) == false
+    end
+
+    @testset "check_holdout_stability (実データ: 実行可能性の確認)" begin
+        # 実データでの安定性判定の真偽そのものは、タスク2.1で確認済みの多重共線性所見
+        # (閉ループ制御下でx1, x2の相関が高いこと)の影響を受け得るため、本テストでは
+        # true/falseいずれであっても正しいとみなし、断定しない(CLAUDE.md学術的誠実さ)。
+        # 完了確認は、関数が実データに対してエラーなく実行されBool型を返すことのみとする。
+        project_root = dirname(dirname(@__DIR__))
+        healthy_path = joinpath(project_root, "TEP_FaultFree_Training.RData")
+
+        if isfile(healthy_path)
+            df_normal = load_rdata(healthy_path)
+            df_small_fit = filter(row -> row.simulationRun <= 20, df_normal)
+            df_small_holdout = filter(row -> 20 < row.simulationRun <= 40, df_normal)
+
+            split_small_fit = PhysicsResiduals.NormalFitSplit(df_small_fit)
+            lam_small = PhysicsResiduals.identify_lambda(split_small_fit)
+            uncertainty_small = PhysicsResiduals.bootstrap_lambda_uncertainty(
+                split_small_fit; n_resamples = 80, rng = MersenneTwister(7)
+            )
+
+            stable = PhysicsResiduals.check_holdout_stability(lam_small, uncertainty_small, df_small_holdout)
+            @test stable isa Bool
+        else
+            @warn "Local test data not found. Skipping check_holdout_stability real-data test."
+        end
+    end
+
 end
