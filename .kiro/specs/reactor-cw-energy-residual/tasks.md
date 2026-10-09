@@ -38,7 +38,7 @@
   - _Boundary: LambdaIdentifier_
   - _Depends: 1.3_
 
-- [ ] 2.2 $\lambda$の不確かさとホールドアウト安定性の検証（LambdaValidator）
+- [x] 2.2 $\lambda$の不確かさとホールドアウト安定性の検証（LambdaValidator）
   - `bootstrap_lambda_uncertainty`関数（ラン単位リサンプリングで信頼区間を算出、時系列相関を壊さない）を実装する
   - `check_holdout_stability`関数（保留部分集合での再同定が信頼区間内に収まるかを判定）を実装する
   - 完了の確認: 実際の正常データに対し`bootstrap_lambda_uncertainty`を実行すると、$a,b,T_{cw,in}$それぞれの信頼区間が返る
