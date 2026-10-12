@@ -47,4 +47,15 @@ export LambdaUncertainty, bootstrap_lambda_uncertainty, check_holdout_stability
 # FARをDetectionMetricsとして報告する(design.md MeanShiftDetector「Service Interface」参照)。
 export DetectionMetrics, calibrate_threshold, detect_mean_shift, evaluate_fault_detection
 
+# タスク3.2(VarianceShiftDetector)で実装した公開名をexportする。
+# calibrate_variance_thresholdは正常検証データ(holdout)のみから窓内標準偏差の
+# しきい値を決定し(Requirement 5.3)、detect_variance_shiftは凍結lambdaのもとで
+# 窓内標準偏差がしきい値を超えた行を、MeanShiftDetectorの判定結果を一切参照せず
+# 独立にフラグする(Requirement 5.1-5.2)。evaluate_fault_detectionは、
+# タスク3.1のMeanShiftDetector版(位置引数4個)と多重ディスパッチで区別される
+# 第2のメソッド(位置引数5個、windowを含む)として、FaultTiming.FAULT_INJECTION_SAMPLEを
+# 基準としたFDR・ADDとFARを、同じDetectionMetrics型の別インスタンスとして報告する
+# (design.md VarianceShiftDetector「Service Interface」参照)。
+export calibrate_variance_threshold, detect_variance_shift
+
 end # module

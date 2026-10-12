@@ -1089,3 +1089,311 @@ function evaluate_fault_detection(lam::ReactorCwLambda, threshold::Float64, df_f
 
     return DetectionMetrics(fdr_by_idv, add_by_idv, far_pct)
 end
+
+# ============================================================================
+# VarianceShiftDetector (design.md「検知」> VarianceShiftDetector参照)
+#
+# 凍結lambdaのもとで残差系列に対する窓内(移動)標準偏差を継続算出し(Requirement 5.1)、
+# 正常検証データ(保留部分集合)のみから決定したしきい値(Requirement 5.3)を超えた場合に、
+# 平均ベースの検知経路(MeanShiftDetector)が発火しているかどうかに関わらず独立に
+# 検知フラグを発する(Requirement 5.2)。IDV(11)・IDV(14)に対する評価では、
+# FaultTiming.FAULT_INJECTION_SAMPLE(=21)を基準とした検知遅れとFDRを、平均ベースの
+# 検知結果とは区別して報告する(Requirement 5.4)。
+#
+# 命名衝突に関する設計判断(タスク本文の指示に基づく、タスク3.2):
+# design.md VarianceShiftDetector「Service Interface」は、evaluate_fault_detectionという
+# 関数名をMeanShiftDetector(タスク3.1)と文字通り再利用している。しかし両者のシグネチャは
+#   MeanShiftDetector:     evaluate_fault_detection(lam, threshold, df_faulty, target_idvs; df_normal_holdout)      (位置引数4個)
+#   VarianceShiftDetector: evaluate_fault_detection(lam, window, threshold, df_faulty, target_idvs; df_normal_holdout) (位置引数5個)
+# であり、位置引数の個数そのものが異なるため、Juliaの多重ディスパッチにより型・個数の両面で
+# 曖昧性なく区別できる(design.md VarianceShiftDetector「Postconditions」の「戻り値は
+# MeanShiftDetector.DetectionMetricsと同じ型で、別経路の結果として区別可能」という記述とも
+# 整合する、意図された多重ディスパッチによる名前再利用である)。したがってタスク3.1の
+# 既存メソッドをリネーム・上書きせず、本タスクでは第2のメソッドとして追加する。
+#
+# Requirements: 5.1, 5.2, 5.3, 5.4
+# Depends: LambdaValidator (タスク2.2: 検証済みlambda), FaultTiming (タスク1.2:
+#          FAULT_INJECTION_SAMPLE, respects_run_boundary)
+# ============================================================================
+
+"""
+    _signed_residual(lam, df)::Vector{Float64}
+
+`y - (a*x1 + b*x2)`(符号付き残差)を計算する内部ヘルパー。MeanShiftDetectorの
+`detect_mean_shift`が使う絶対値残差`|y - (a*x1+b*x2)|`とは異なり、本ヘルパーは
+符号を保持したまま返す。
+
+分散(窓内標準偏差)は系列の「ばらつき」を測る統計量であり、絶対値を取ってから
+標準偏差を計算すると(整流によって)値の変動性そのものではなく平均シフト型の
+挙動と混同されてしまう(design.md VarianceShiftDetector Intent「残差の時間窓内
+変動性」の字義どおりの実装、Requirement 5.1がMeanShiftDetectorの平均ベース検知と
+明確に独立であることを要求することとも整合する)。したがってVarianceShiftDetectorの
+各関数はこの符号付き残差を一貫して使用する。
+"""
+function _signed_residual(lam::ReactorCwLambda, df::DataFrame)::Vector{Float64}
+    feats = build_design_matrix(df)
+    return feats.y .- (lam.a .* feats.x1 .+ lam.b .* feats.x2)
+end
+
+"""
+    _variance_flags_for_run(resid, window, threshold)::Vector{Bool}
+
+単一ラン内の符号付き残差系列`resid`(ラン境界をまたがないことが呼び出し元の責務)について、
+各位置`i`での窓内(trailing window、`resid[i-window+1:i]`)標準偏差が`threshold`を
+**超えた**(厳密不等号、`detect_mean_shift`と同じ慣用句)場合に`true`を返す。
+
+窓を構成するのに十分な過去サンプルがない先頭`window-1`個の位置は、判定不能として
+`false`を返す(単一サンプル・短すぎる窓によるノイズ由来の誤検知を避けるための
+意図的な選択。research.mdのRisks「窓長が不適切な場合の挙動」参照)。
+"""
+function _variance_flags_for_run(resid::Vector{Float64}, window::Int, threshold::Float64)::Vector{Bool}
+    m = length(resid)
+    flags = fill(false, m)
+    for i in window:m
+        s = std(view(resid, (i - window + 1):i))
+        if s > threshold
+            flags[i] = true
+        end
+    end
+    return flags
+end
+
+"""
+    calibrate_variance_threshold(lam, df_normal_holdout; window, margin=1.25)::Float64
+
+Requirement 5.3: 分散変化型検知の第2の統計量(窓内標準偏差)のしきい値を、異常データを
+一切参照せず正常の検証データ(`split_normal_data`の保留部分集合)のみから決定する。
+
+\$\$\\text{threshold}_{\\mathrm{var}} = \\max_{k,\\,i\\ge\\text{window}} \\operatorname{std}\\!\\left(r_k[i-\\text{window}+1{:}i]\\right) \\times \\text{margin}\$\$
+
+ここで\$r_k\$はラン\$k\$内での符号付き残差系列(`_signed_residual`)であり、最大は
+`df_normal_holdout`に含まれる全ランの全窓内標準偏差についてとる。`calibrate_threshold`
+(タスク3.1、MeanShiftDetector)と同じ「保留部分集合の統計量の最大値×margin」という
+暫定規約(research.md「残差『第2の統計量』の設計」参照)を、窓内標準偏差という
+別の統計量に適用したものである。
+
+窓はラン境界をまたがない(`respects_run_boundary`でソートしたうえで`simulationRun`ごとに
+独立して窓を構成する、Requirement 8.3)。
+
+- Preconditions: `df_normal_holdout`は`split_normal_data`の保留部分集合(またはそれに
+  相当する、異常データを含まない正常運転データ)で、`simulationRun`・`sample`列を持つ。
+  `window`はサンプル単位の正の整数(design.md Preconditions)
+- Postconditions: 返り値は常に正(`margin > 0`かつ標準偏差は非負のため)
+- Invariants: `calibrate_threshold`と同じ防御的チェック(`faultNumber`列が存在し0以外の
+  値を含む場合は明示的エラーで停止、Requirement 5.3の「異常データを参照しない」の
+  実装レベルでの保証)を行う。`window < 2`は標準偏差が定義不能(サンプル1点では
+  Statistics.stdがNaNを返す退化ケース)なので明示的エラーとする(design.mdの字面上は
+  「正の整数」だが、NaNをしきい値として黒子に受理してしまう危険を避けるための、
+  タスク3.1の`margin<=0`拒否と同種の意図的な拡張)。
+"""
+function calibrate_variance_threshold(lam::ReactorCwLambda, df_normal_holdout::DataFrame;
+                                       window::Int, margin::Float64 = 1.25)::Float64
+    if margin <= 0.0
+        error("calibrate_variance_threshold: marginは正でなければなりません (margin=$margin)")
+    end
+    if window < 2
+        error("calibrate_variance_threshold: windowは2以上の整数でなければなりません " *
+              "(window=$window)。window=1では窓内標準偏差が定義不能(NaN)です。")
+    end
+    for col in (:simulationRun, :sample)
+        if !hasproperty(df_normal_holdout, col)
+            error("calibrate_variance_threshold: df_normal_holdoutに必要な列 '$(col)' が存在しません")
+        end
+    end
+    if hasproperty(df_normal_holdout, :faultNumber) && any(df_normal_holdout.faultNumber .!= 0)
+        error("calibrate_variance_threshold: df_normal_holdoutに異常データ(faultNumber != 0の行)が" *
+              "含まれています。Requirement 5.3は閾値決定に異常データを参照しないことを要求します。")
+    end
+
+    sorted = respects_run_boundary(df_normal_holdout)
+
+    stds = Float64[]
+    for g in groupby(sorted, :simulationRun)
+        g_df = DataFrame(g)
+        r = _signed_residual(lam, g_df)
+        m = length(r)
+        if m < window
+            continue
+        end
+        for i in window:m
+            push!(stds, std(view(r, (i - window + 1):i)))
+        end
+    end
+
+    if isempty(stds)
+        error("calibrate_variance_threshold: window=$(window)サンプルの窓を構成できるrunが" *
+              "df_normal_holdoutに存在しません(各runの行数がwindow未満です)")
+    end
+
+    return maximum(stds) * margin
+end
+
+"""
+    detect_variance_shift(lam, df, window, threshold)::Vector{Bool}
+
+Requirement 5.1: 凍結された`lam`のもとで、`df`の各行について窓内(直近`window`サンプル)の
+符号付き残差`y - (a\\,x_1 + b\\,x_2)`の標準偏差を継続算出する。
+Requirement 5.2: 窓内標準偏差が`threshold`を**超えた**(厳密不等号、`detect_mean_shift`と
+同じ慣用句)場合に、独立に検知フラグ`true`を発する。この判定はMeanShiftDetectorの
+判定結果を一切参照しない(関数シグネチャ・実装のいずれにも`detect_mean_shift`の
+呼び出しや`DetectionMetrics`への依存が存在しない)。
+Requirement 8.3: 異なる`simulationRun`をまたいで窓(=標準偏差の計算範囲)を構成しない。
+`respects_run_boundary`(タスク1.2、FaultTiming)で`[simulationRun, sample]`順にソートした
+うえで、`simulationRun`ごとに独立して窓内標準偏差を計算する。
+
+戻り値は`df`と同じ行数・**同じ行順序**(`df`自身の行順序、ソート後の順序ではない)の
+`Vector{Bool}`である。内部で一時的な行インデックス列を付与してから`respects_run_boundary`で
+ソートし、ラン単位で窓内標準偏差を計算したのち、その行インデックス列を使って結果を
+`df`の元の行順序へ書き戻す。これにより、呼び出し元が`df`を事前にソートしていない場合
+(例: 複数ランが`simulationRun`の昇順になっていない場合)でも、`detect_mean_shift`と同じ
+「`length(result) == nrow(df)`かつ`result[i]`は`df`の行`i`に対応する」という契約を保つ。
+
+各ラン内で窓を構成するのに十分な過去サンプルがない先頭`window-1`行は`false`になる
+(`_variance_flags_for_run`参照)。
+
+- Preconditions: `df`に`build_design_matrix`が要求する列(既定`:xmeas_9`, `:xmeas_21`,
+  `:xmv_10`)、および`:simulationRun`・`:sample`列が存在する。`window`は2以上の整数
+- Postconditions: `length(result) == nrow(df)`
+"""
+function detect_variance_shift(lam::ReactorCwLambda, df::DataFrame, window::Int,
+                                threshold::Float64)::Vector{Bool}
+    for col in (:simulationRun, :sample)
+        if !hasproperty(df, col)
+            error("detect_variance_shift: dfに必要な列 '$(col)' が存在しません")
+        end
+    end
+    if window < 2
+        error("detect_variance_shift: windowは2以上の整数でなければなりません (window=$window)。" *
+              "window=1では窓内標準偏差が定義不能(NaN)です。")
+    end
+
+    n = nrow(df)
+    row_idx_col = :_variance_shift_row_idx
+    df_tagged = hcat(df, DataFrame(row_idx_col => collect(1:n)))
+    sorted = respects_run_boundary(df_tagged)
+
+    result = fill(false, n)
+    for g in groupby(sorted, :simulationRun)
+        g_df = DataFrame(g)
+        r = _signed_residual(lam, g_df)
+        flags_run = _variance_flags_for_run(r, window, threshold)
+        orig_idxs = g_df[!, row_idx_col]
+        for (pos, orig_i) in enumerate(orig_idxs)
+            result[orig_i] = flags_run[pos]
+        end
+    end
+
+    return result
+end
+
+"""
+    evaluate_fault_detection(lam, window, threshold, df_faulty, target_idvs; df_normal_holdout)::DetectionMetrics
+
+VarianceShiftDetector版の`evaluate_fault_detection`(design.md VarianceShiftDetector
+Service Interface参照)。MeanShiftDetector版(タスク3.1、位置引数4個
+`evaluate_fault_detection(lam, threshold, df_faulty, target_idvs; df_normal_holdout)`)とは
+異なり、本メソッドは位置引数5個(`lam, window, threshold, df_faulty, target_idvs`)を
+取るため、Juliaの多重ディスパッチにより曖昧性なく区別される(本ファイル上部の
+「命名衝突に関する設計判断」参照)。
+
+Requirement 5.4: `target_idvs`(典型的には`[11, 14]`)の各IDVについて、分散ベースの
+故障検知率(FDR)と、`FaultTiming.FAULT_INJECTION_SAMPLE`(=21)を基準とした検知遅れ(ADD)を、
+平均ベースの検知結果(MeanShiftDetector版`evaluate_fault_detection`の戻り値)とは別個の
+`DetectionMetrics`インスタンスとして算出する。正常の検証データに対する誤報率(FAR)も
+同様に、`detect_variance_shift`に基づいて独立に算出する。
+Requirement 8.2: 検知遅れは各ランの先頭からではなく、`FAULT_INJECTION_SAMPLE`から計測する。
+Requirement 8.3: ラン境界をまたいで窓内標準偏差・検知を計算しない(`faultNumber`・
+`simulationRun`でグループ化してからラン内でのみサンプル順に処理する。`detect_variance_shift`
+自身もラン単位で`respects_run_boundary`を適用するため、二重に安全である)。
+
+本実装は、MeanShiftDetector版`evaluate_fault_detection`(タスク3.1)と全く同じ
+制御フロー(IDVごとにラン単位でグループ化し、投入時刻以降で最初に発火したサンプルから
+ADDを計算し、holdoutに対する`detect_variance_shift`の発火率をFARとする)を、
+`detect_mean_shift`の代わりに`detect_variance_shift`(window付き)に置き換えて適用した
+ものである。
+
+## 開示すべき限界: holdoutベースのFARは、現行の閾値決定方式のもとでは構造的に0%になる
+`calibrate_variance_threshold`は`threshold = max(窓内標準偏差_holdout) * margin`
+(`margin > 1`)としてしきい値を定義し、`detect_variance_shift`は厳密不等号
+`std > threshold`で検知を判定する。したがって、同じ`df_normal_holdout`を本関数の
+キーワード引数`df_normal_holdout`に渡した場合、`far_pct`は構造的に`0.0`になる
+(MeanShiftDetector版`evaluate_fault_detection`のdocstring「開示すべき限界」と全く同じ
+数学的理由による、現行のmax×margin閾値決定方式の必然的な性質であり、バグではない。
+CLAUDE.md §8/Requirement 9: 学術的誠実さと限界の記録)。
+
+- Preconditions: `threshold`は`calibrate_variance_threshold`の出力(異常データを一切
+  参照していない)。`df_normal_holdout`は`calibrate_variance_threshold`に渡したholdoutと
+  同一(またはそれに相当する、異常データを含まない正常運転データ)であることを想定する。
+  `calibrate_variance_threshold`と同じ防御的チェック(`faultNumber`列が存在し0以外の
+  値を含む場合は明示的エラーで停止)を行う
+- Postconditions: `target_idvs`のいずれかが`df_faulty`に1件も存在しない場合、
+  当該IDVの`fdr_by_idv`・`add_by_idv`は`NaN`(評価不能の明示、design.md Error
+  Categories参照)。`add_by_idv`の値は`FaultTiming.FAULT_INJECTION_SAMPLE`からの
+  相対値である。`far_pct`は`df_normal_holdout`のみから計算され、`df_faulty`の
+  内容には一切依存しない。戻り値はMeanShiftDetector版と同じ`DetectionMetrics`型だが、
+  常に別個のインスタンスであり、両者の値を混同しない(design.md VarianceShiftDetector
+  「Postconditions」)
+"""
+function evaluate_fault_detection(lam::ReactorCwLambda, window::Int, threshold::Float64,
+                                   df_faulty::DataFrame, target_idvs::Vector{Int};
+                                   df_normal_holdout::DataFrame)::DetectionMetrics
+    for col in (:faultNumber, :simulationRun, :sample)
+        if !hasproperty(df_faulty, col)
+            error("evaluate_fault_detection (VarianceShiftDetector): df_faultyに必要な列 '$(col)' " *
+                  "が存在しません")
+        end
+    end
+    if window < 2
+        error("evaluate_fault_detection (VarianceShiftDetector): windowは2以上の整数でなければ" *
+              "なりません (window=$window)")
+    end
+    if hasproperty(df_normal_holdout, :faultNumber) && any(df_normal_holdout.faultNumber .!= 0)
+        error("evaluate_fault_detection (VarianceShiftDetector): df_normal_holdoutに異常データ" *
+              "(faultNumber != 0の行)が含まれています。Requirement 5.4は正常の検証データ(holdout)" *
+              "のみからFARを決定することを要求します。")
+    end
+
+    df_sorted = sort(df_faulty, [:faultNumber, :simulationRun, :sample])
+
+    fdr_by_idv = Dict{Int,Float64}()
+    add_by_idv = Dict{Int,Float64}()
+
+    for idv in target_idvs
+        df_idv = filter(row -> row.faultNumber == idv, df_sorted)
+
+        if nrow(df_idv) == 0
+            fdr_by_idv[idv] = NaN
+            add_by_idv[idv] = NaN
+            continue
+        end
+
+        total_runs = 0
+        detected_runs = 0
+        delays = Float64[]
+
+        for g in groupby(df_idv, :simulationRun)
+            total_runs += 1
+            g_df = DataFrame(g)  # SubDataFrameをbuild_design_matrix/detect_variance_shiftに
+                                  # 渡せる具体的なDataFrameへ変換する(型シグネチャの整合、
+                                  # タスク3.1のevaluate_fault_detectionと同じ慣用句)
+            samples = g_df.sample
+            flags = detect_variance_shift(lam, g_df, window, threshold)
+
+            post_idx = findall(s -> s >= FAULT_INJECTION_SAMPLE, samples)
+            detect_pos = isempty(post_idx) ? nothing : findfirst(identity, flags[post_idx])
+            if detect_pos !== nothing
+                detect_sample = samples[post_idx[detect_pos]]
+                push!(delays, Float64(detect_sample - FAULT_INJECTION_SAMPLE))
+                detected_runs += 1
+            end
+        end
+
+        fdr_by_idv[idv] = detected_runs / total_runs * 100.0
+        add_by_idv[idv] = isempty(delays) ? -1.0 : mean(delays)
+    end
+
+    far_flags = detect_variance_shift(lam, df_normal_holdout, window, threshold)
+    far_pct = isempty(far_flags) ? NaN : (count(identity, far_flags) / length(far_flags) * 100.0)
+
+    return DetectionMetrics(fdr_by_idv, add_by_idv, far_pct)
+end

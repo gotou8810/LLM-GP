@@ -56,7 +56,7 @@
   - _Boundary: MeanShiftDetector_
   - _Depends: 2.2, 1.2_
 
-- [ ] 3.2 分散変化型検知の実装（VarianceShiftDetector、IDV11/14）
+- [x] 3.2 分散変化型検知の実装（VarianceShiftDetector、IDV11/14）
   - `calibrate_variance_threshold`関数（窓内標準偏差の正常保留データからのしきい値算出）を実装する
   - `detect_variance_shift`関数を実装する
   - `evaluate_fault_detection`関数（平均ベースとは独立した検知指標を返す）を実装する

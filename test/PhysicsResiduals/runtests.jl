@@ -1037,4 +1037,267 @@ using .TEPDataLoader: load_rdata
         end
     end
 
+    # ========================================================================
+    # タスク3.2: 分散変化型検知の実装(VarianceShiftDetector、IDV11/14)
+    # Requirements: 5.1, 5.2, 5.3, 5.4
+    #
+    # 命名衝突の解決(タスク本文の指示): design.md VarianceShiftDetector「Service
+    # Interface」はevaluate_fault_detectionという名前をMeanShiftDetectorと文字通り
+    # 再利用しているが、シグネチャは
+    #   MeanShiftDetector:     evaluate_fault_detection(lam, threshold, df_faulty, target_idvs; df_normal_holdout)
+    #   VarianceShiftDetector: evaluate_fault_detection(lam, window, threshold, df_faulty, target_idvs; df_normal_holdout)
+    # であり、位置引数の個数が4個/5個と異なるため、Juliaの多重ディスパッチにより
+    # 曖昧性なく区別できる(design.md Postconditions「戻り値はMeanShiftDetector.
+    # DetectionMetricsと同じ型で、別経路の結果として区別可能」とも整合)。したがって
+    # タスク3.1の既存メソッドをリネーム・上書きせず、同名の第2メソッドとして追加する。
+    # ========================================================================
+
+    @testset "calibrate_variance_threshold (正常保留データのみからの窓内標準偏差最大×margin、Requirement 5.3)" begin
+        # design.md VarianceShiftDetector Service Interface:
+        #   calibrate_variance_threshold(lam, df_normal_holdout; window, margin=1.25)::Float64
+        lam = PhysicsResiduals.ReactorCwLambda(2.0, -60.0, 30.0, true, nothing)
+        window = 2
+
+        # run401: 残差は常に0 -> 窓内標準偏差は常に0
+        # run402: 残差=[0.0, 5.0, -5.0] -> 窓(window=2)内標準偏差はstd([0,5])とstd([5,-5])の2通り
+        run401 = _make_run_df(0, 401, [1, 2, 3], s -> [0.0, 0.0, 0.0][s]; lam = lam)
+        run402 = _make_run_df(0, 402, [1, 2, 3], s -> [0.0, 5.0, -5.0][s]; lam = lam)
+        df_holdout = vcat(run401, run402)
+
+        expected_max_std = max(std([0.0, 5.0]), std([5.0, -5.0]))
+
+        threshold_default = PhysicsResiduals.calibrate_variance_threshold(lam, df_holdout; window = window)
+        @test isapprox(threshold_default, expected_max_std * 1.25; atol = 1e-9)
+
+        threshold_custom_margin = PhysicsResiduals.calibrate_variance_threshold(
+            lam, df_holdout; window = window, margin = 2.0
+        )
+        @test isapprox(threshold_custom_margin, expected_max_std * 2.0; atol = 1e-9)
+
+        # Requirement 5.3の「異常データを参照しない」ことを実装レベルで保証するため、
+        # calibrate_thresholdと同じ防御的チェック(faultNumber != 0の行を拒否)を行う
+        df_with_fault = _make_run_df(11, 403, [1, 2, 3], s -> 0.0; lam = lam)
+        @test_throws ErrorException PhysicsResiduals.calibrate_variance_threshold(
+            lam, df_with_fault; window = window
+        )
+
+        # margin<=0は物理的に無意味な閾値を生むため明示的エラー
+        @test_throws ErrorException PhysicsResiduals.calibrate_variance_threshold(
+            lam, df_holdout; window = window, margin = 0.0
+        )
+
+        # window<2は窓内標準偏差が定義不能(NaN)になる退化ケースのため明示的エラー
+        @test_throws ErrorException PhysicsResiduals.calibrate_variance_threshold(
+            lam, df_holdout; window = 1
+        )
+    end
+
+    @testset "detect_variance_shift (しきい値超過/未超過の正しい判別、Requirement 5.1/5.2)" begin
+        # design.md VarianceShiftDetector Service Interface:
+        #   detect_variance_shift(lam, df, window, threshold)::Vector{Bool}
+        lam = PhysicsResiduals.ReactorCwLambda(2.0, -60.0, 30.0, true, nothing)
+        window = 2
+
+        r = [0.0, 0.0, 10.0, 0.0]
+        df = _make_run_df(90, 1, collect(1:4), s -> r[s]; lam = lam)
+
+        # サンプル3・4の窓(window=2)はどちらも多重集合{0,10}なので標準偏差は同じ値
+        expected_std_34 = std([0.0, 10.0])
+
+        # しきい値ちょうどでは厳密不等号(超過ではない)なのでフラグは立たない
+        flags_not_flagged = PhysicsResiduals.detect_variance_shift(lam, df, window, expected_std_34)
+        @test flags_not_flagged isa Vector{Bool}
+        @test flags_not_flagged == [false, false, false, false]
+        @test length(flags_not_flagged) == nrow(df)
+
+        # しきい値をわずかに下げると超過してフラグが立つ
+        flags_flagged = PhysicsResiduals.detect_variance_shift(lam, df, window, expected_std_34 - 1e-6)
+        @test flags_flagged == [false, false, true, true]
+    end
+
+    @testset "detect_variance_shift (ラン境界を尊重し、ランをまたいで窓を構成しないこと、Requirement 8.3/5.1)" begin
+        # window=2のとき、ランをまたいで窓を構成してしまう誤った実装は、あるランの
+        # 最終サンプルと次のランの先頭サンプルを1つの窓として扱ってしまう。
+        # run1(残差=[0,0])・run2(残差=[1000,-1000])を作り、しきい値500を、
+        # 「ランをまたいだ窓(std([0,1000])≈707.1)」と「run2内だけの窓(std([1000,-1000])≈1414.2)」
+        # の間に設定することで、ランをまたぐ誤実装とラン境界を尊重する正しい実装を直接
+        # 区別できるようにする。
+        lam = PhysicsResiduals.ReactorCwLambda(2.0, -60.0, 30.0, true, nothing)
+        window = 2
+        threshold = 500.0
+
+        run1 = _make_run_df(91, 1, [1, 2], s -> [0.0, 0.0][s]; lam = lam)
+        run2 = _make_run_df(91, 2, [1, 2], s -> [1000.0, -1000.0][s]; lam = lam)
+
+        # ケース1: 入力行順序がソート順(run1 -> run2)と一致する場合
+        df_ordered = vcat(run1, run2)
+        flags_ordered = PhysicsResiduals.detect_variance_shift(lam, df_ordered, window, threshold)
+        # run2の先頭サンプル(global行3)はrun2内ではまだ1サンプルしかなく窓を構成できない
+        # ため未発火(false)。もしランをまたいで窓を構成する誤実装なら、run1の最終サンプル
+        # (残差0)とrun2の先頭サンプル(残差1000)を窓にしてstd([0,1000])≈707.1>500となり
+        # 誤って発火(true)してしまう。
+        @test flags_ordered == [false, false, false, true]
+
+        # ケース2: 入力行順序をソート順と逆(run2 -> run1)にしても、戻り値は入力df自身の
+        # 行順序に対応すること(respects_run_boundaryによる内部ソートの後、元の行順序へ
+        # 正しく戻されていることの確認)。
+        df_scrambled = vcat(run2, run1)
+        flags_scrambled = PhysicsResiduals.detect_variance_shift(lam, df_scrambled, window, threshold)
+        @test flags_scrambled == [false, true, false, false]
+    end
+
+    @testset "detect_variance_shift は detect_mean_shift と独立に発火する (Requirement 5.1/5.2)" begin
+        # 平均ベースの検知経路(detect_mean_shift)とは独立に、分散ベースの検知経路
+        # (detect_variance_shift)が発火することを直接証明する。振幅40で正負に振動する
+        # 残差(|40|<50なので平均ベースの|resid|>50は一度も発火しない)を投入時刻
+        # (サンプル21)以降に与えると、窓内(window=2)標準偏差std([40,-40])≈56.57は
+        # 分散しきい値30を超えるため、分散ベースは独立に発火する。
+        lam = PhysicsResiduals.ReactorCwLambda(2.0, -60.0, 30.0, true, nothing)
+        mean_threshold = 50.0
+        window = 2
+        variance_threshold = 30.0
+
+        samples = collect(1:30)
+        r = Float64[s < 21 ? 0.0 : (iseven(s) ? -40.0 : 40.0) for s in samples]
+        df = _make_run_df(92, 1, samples, s -> r[s]; lam = lam)
+
+        mean_flags = PhysicsResiduals.detect_mean_shift(lam, df, mean_threshold)
+        @test all(!, mean_flags)
+
+        variance_flags = PhysicsResiduals.detect_variance_shift(lam, df, window, variance_threshold)
+        @test any(variance_flags)
+        @test all(.!variance_flags[1:21])
+        @test all(variance_flags[22:30])
+
+        # evaluate_fault_detectionレベル(多重ディスパッチで区別される2メソッド)でも
+        # 同じ独立性が確認できることを示す: 平均ベースは未検知(FDR=0%)、分散ベースは
+        # 検知(FDR=100%)という、平均ベースの検知結果に関わらず分散ベースが独立に
+        # 検知フラグを発する(Requirement 5.2)ことの直接証拠。
+        #
+        # 注: _make_holdout_df(タスク3.1)は:sample/:simulationRun列を持たない
+        # (MeanShiftDetector版のdf_normal_holdoutは行単位の残差計算のみで、ラン境界を
+        # 意識しないため不要だった)。VarianceShiftDetector版は窓内標準偏差の計算に
+        # ラン境界(:simulationRun・:sample)が必須のため、ここでは_make_run_dfで
+        # 必要な列を持つholdoutを構築する(idv=0で正常データであることを表現)。
+        df_holdout = _make_run_df(0, 501, collect(1:5), s -> 0.0; lam = lam)
+
+        mean_metrics = PhysicsResiduals.evaluate_fault_detection(
+            lam, mean_threshold, df, [92]; df_normal_holdout = df_holdout
+        )
+        variance_metrics = PhysicsResiduals.evaluate_fault_detection(
+            lam, window, variance_threshold, df, [92]; df_normal_holdout = df_holdout
+        )
+
+        @test isapprox(mean_metrics.fdr_by_idv[92], 0.0; atol = 1e-9)
+        @test isapprox(variance_metrics.fdr_by_idv[92], 100.0; atol = 1e-9)
+        @test isapprox(variance_metrics.add_by_idv[92], 1.0; atol = 1e-9)
+    end
+
+    @testset "evaluate_fault_detection (防御的チェック: VarianceShiftDetector側のdf_normal_holdout要求と異常データ混入の拒否)" begin
+        lam = PhysicsResiduals.ReactorCwLambda(2.0, -60.0, 30.0, true, nothing)
+        window = 2
+        threshold = 3.0
+        samples = collect(1:30)
+        df_faulty = _make_run_df(82, 1, samples, s -> 0.0; lam = lam)
+
+        @test_throws UndefKeywordError PhysicsResiduals.evaluate_fault_detection(
+            lam, window, threshold, df_faulty, [82]
+        )
+
+        df_holdout_with_fault = DataFrame(
+            simulationRun = [401],
+            faultNumber = [4],
+            sample = [1],
+            xmeas_9 = [94.6 + lam.a * (40.0 * 94.6) + lam.b * 40.0],
+            xmeas_21 = [94.6],
+            xmv_10 = [40.0]
+        )
+        @test_throws ErrorException PhysicsResiduals.evaluate_fault_detection(
+            lam, window, threshold, df_faulty, [82]; df_normal_holdout = df_holdout_with_fault
+        )
+    end
+
+    @testset "evaluate_fault_detection (実データ: タスク3.2完了確認、IDV11・IDV14、VarianceShiftDetector)" begin
+        # タスク3.2の完了確認: 実際の異常データ(IDV11, IDV14)に対しevaluate_fault_detectionを
+        # 実行すると、平均シフト経路とは別の検知指標(DetectionMetrics)が返る。
+        #
+        # 窓長window=20(=60分、3分間隔サンプリング)の選定理由: 本タスクの実装時検証
+        # (scratchpad調査、brief.mdのIDV11/14ラン内標準偏差比6.5〜13.8倍の実測と整合)で、
+        # window=10/15/20/30のいずれでも正常保留データに対する窓内標準偏差の最大値に対し、
+        # IDV11/14投入後の窓内標準偏差が明確に(72%〜100%のサンプルで)それを超えることを
+        # 確認済み。window=20は単一サンプルノイズに支配されるほど短くはなく(1時間相当の
+        # 平滑化)、かつ故障検知が過度に遅れるほど長くもない、妥当な中間値として選定した。
+        project_root = dirname(dirname(@__DIR__))
+        healthy_path = joinpath(project_root, "TEP_FaultFree_Training.RData")
+        faulty_path = joinpath(project_root, "TEP_Faulty_Training.RData")
+        window = 20
+
+        if isfile(healthy_path) && isfile(faulty_path)
+            df_normal = load_rdata(healthy_path)
+            df_normal_small = filter(row -> row.simulationRun <= 40, df_normal)
+
+            split_fit = PhysicsResiduals.NormalFitSplit(filter(row -> row.simulationRun <= 20, df_normal_small))
+            df_holdout_small = filter(row -> row.simulationRun > 20, df_normal_small)
+
+            lam_raw = PhysicsResiduals.identify_lambda(split_fit)
+            lam = PhysicsResiduals.check_physical_plausibility(
+                lam_raw; tcw_out_mean = mean(split_fit.df.xmeas_21)
+            )
+
+            variance_threshold = PhysicsResiduals.calibrate_variance_threshold(
+                lam, df_holdout_small; window = window
+            )
+            @test variance_threshold isa Float64
+            @test isfinite(variance_threshold)
+            @test variance_threshold > 0.0
+
+            mean_threshold = PhysicsResiduals.calibrate_threshold(lam, df_holdout_small)
+
+            df_faulty_all = load_rdata(faulty_path)
+            df_faulty_small = filter(
+                row -> row.faultNumber in (11, 14) && row.simulationRun <= 20, df_faulty_all
+            )
+            @test nrow(df_faulty_small) > 0
+
+            t_start = time()
+            variance_metrics = PhysicsResiduals.evaluate_fault_detection(
+                lam, window, variance_threshold, df_faulty_small, [11, 14]; df_normal_holdout = df_holdout_small
+            )
+            elapsed = time() - t_start
+            @info "evaluate_fault_detection (VarianceShiftDetector) real-data wall-clock time (IDV11/14, 20 runs)" elapsed
+
+            mean_metrics = PhysicsResiduals.evaluate_fault_detection(
+                lam, mean_threshold, df_faulty_small, [11, 14]; df_normal_holdout = df_holdout_small
+            )
+
+            @test variance_metrics isa PhysicsResiduals.DetectionMetrics
+            @test mean_metrics isa PhysicsResiduals.DetectionMetrics
+
+            for idv in (11, 14)
+                @test haskey(variance_metrics.fdr_by_idv, idv)
+                @test haskey(variance_metrics.add_by_idv, idv)
+                @test 0.0 <= variance_metrics.fdr_by_idv[idv] <= 100.0
+                if variance_metrics.add_by_idv[idv] != -1.0
+                    @test variance_metrics.add_by_idv[idv] >= 0.0
+                end
+            end
+            @test isfinite(variance_metrics.far_pct)
+            @test 0.0 <= variance_metrics.far_pct <= 100.0
+
+            # 完了確認の核心: 分散経路の指標は平均経路の指標と別個のインスタンスとして
+            # 算出され、少なくとも1つのIDVでFDRまたはADDの値が異なる(design.md
+            # VarianceShiftDetector Postconditions「戻り値はMeanShiftDetector.
+            # DetectionMetricsと同じ型で、別経路の結果として区別可能」)。
+            @test variance_metrics !== mean_metrics
+            differs = any(
+                !isequal(variance_metrics.fdr_by_idv[idv], mean_metrics.fdr_by_idv[idv]) ||
+                !isequal(variance_metrics.add_by_idv[idv], mean_metrics.add_by_idv[idv])
+                for idv in (11, 14)
+            )
+            @test differs
+        else
+            @warn "Local test data not found. Skipping evaluate_fault_detection (VarianceShiftDetector) real-data test."
+        end
+    end
+
 end
