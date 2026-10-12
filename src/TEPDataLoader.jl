@@ -3,8 +3,9 @@ module TEPDataLoader
 using Downloads
 using RData
 using DataFrames
+using Serialization
 
-export download_data, load_rdata, extract_variables
+export download_data, load_rdata, load_rdata_subset, extract_variables
 
 """
 指定されたURLからファイルをダウンロードし、ローカルの保存先パスを返します。
@@ -65,6 +66,62 @@ function load_rdata(file_path::String)::DataFrame
             error("Failed to load .RData file: $file_path. Error: $e")
         end
     end
+end
+
+"""
+.RDataファイルのうち、指定した故障番号(`fault_numbers`)と`simulationRun <= run_max`の
+行だけを抽出したDataFrameを返します。抽出結果は`cache_dir`に保存し、2回目以降は
+.RDataファイル全体を読み込まずにキャッシュから返します。
+
+`TEP_Faulty_Training.RData`(約5,000,000行)は`load_rdata`で全体を読むと1プロセスで
+数GBのメモリを消費するため、一部の故障番号しか使わない処理はこちらを使います。
+キャッシュのファイル名には元ファイルのサイズと更新時刻を含めるため、元ファイルが
+差し替えられた場合は自動的に作り直されます。初回(キャッシュ作成時)のみ`load_rdata`と
+同じメモリを消費します。
+"""
+function load_rdata_subset(
+    file_path::String;
+    fault_numbers,
+    run_max::Union{Int,Nothing} = nothing,
+    cache_dir::String = joinpath(dirname(abspath(file_path)), ".cache")
+)::DataFrame
+    if !isfile(file_path)
+        throw(SystemError("File not found: $file_path"))
+    end
+
+    faults = sort(unique(Int.(collect(fault_numbers))))
+    st = stat(file_path)
+    run_tag = run_max === nothing ? "" : "_run$(run_max)"
+    cache_name = string(
+        basename(file_path), "_idv", join(faults, "-"), run_tag,
+        "_", st.size, "_", round(Int, st.mtime), ".jls"
+    )
+    cache_path = joinpath(cache_dir, cache_name)
+
+    if isfile(cache_path)
+        try
+            cached = deserialize(cache_path)
+            cached isa DataFrame && return cached
+        catch
+            # Julia/DataFramesのバージョン違い等で読めないキャッシュは作り直す
+        end
+    end
+
+    df_all = load_rdata(file_path)
+    fault_set = Set(faults)
+    mask = [f in fault_set for f in df_all.faultNumber]
+    if run_max !== nothing
+        mask .&= df_all.simulationRun .<= run_max
+    end
+    df_subset = df_all[mask, :]
+
+    # 書き込み途中のファイルを別プロセスが読まないよう、一時ファイル経由で置き換える
+    mkpath(cache_dir)
+    tmp_path = cache_path * ".tmp$(getpid())"
+    serialize(tmp_path, df_subset)
+    mv(tmp_path, cache_path; force = true)
+
+    return df_subset
 end
 
 """

@@ -92,6 +92,39 @@ using .TEPDataLoader
         @test_throws ErrorException extract_variables(df, vars_all_missing)
     end
 
+    @testset "load_rdata_subset" begin
+        using DataFrames
+
+        # 正常系: 指定した故障番号・ランの行だけが返り、2回目はキャッシュから同じ内容が返る
+        # (正常データはfaultNumber=0のみ。小さいファイルでキャッシュの挙動を確認する)
+        valid_file = joinpath(dirname(@__DIR__), "TEP_FaultFree_Training.RData")
+        if isfile(valid_file)
+            cache_dir = mktempdir()
+            df_first = load_rdata_subset(valid_file; fault_numbers = [0], run_max = 3, cache_dir = cache_dir)
+            @test nrow(df_first) > 0
+            @test all(df_first.faultNumber .== 0)
+            @test maximum(df_first.simulationRun) == 3
+            @test length(readdir(cache_dir)) == 1
+
+            df_second = load_rdata_subset(valid_file; fault_numbers = [0], run_max = 3, cache_dir = cache_dir)
+            @test df_second == df_first
+            @test length(readdir(cache_dir)) == 1
+
+            # 壊れたキャッシュは作り直される
+            cache_file = joinpath(cache_dir, only(readdir(cache_dir)))
+            write(cache_file, "broken")
+            @test load_rdata_subset(valid_file; fault_numbers = [0], run_max = 3, cache_dir = cache_dir) == df_first
+
+            # 該当する故障番号が無い場合は0行
+            @test nrow(load_rdata_subset(valid_file; fault_numbers = [4], cache_dir = cache_dir)) == 0
+        else
+            @warn "Local test data not found: $valid_file. Skipping load_rdata_subset test."
+        end
+
+        # 異常系: ファイルが存在しない
+        @test_throws SystemError load_rdata_subset("nonexistent.RData"; fault_numbers = [4])
+    end
+
     @testset "Integration Test" begin
         using DataFrames
         

@@ -12,7 +12,12 @@ using .PhysicsResiduals
 # df_normal/df_faulty引数として直接渡すために、独立にincludeして使う
 # (test/VerificationHarness/runtests.jlと同じ「実データが無ければスキップ」規約)。
 include("../../src/TEPDataLoader.jl")
-using .TEPDataLoader: load_rdata
+using .TEPDataLoader: load_rdata, load_rdata_subset
+
+# 異常データ(TEP_Faulty_Training.RData、約5,000,000行)を全体読み込みすると1プロセスで
+# 数GBのメモリを消費するため、本テストが対象とするIDV(4, 11, 14)の行だけを
+# キャッシュ経由で読み込む(初回のみ全体を読み込んでキャッシュを作成する)。
+load_faulty_target_idvs(faulty_path) = load_rdata_subset(faulty_path; fault_numbers = [4, 11, 14])
 
 @testset "PhysicsResiduals Tests" begin
 
@@ -108,7 +113,7 @@ using .TEPDataLoader: load_rdata
 
         if isfile(healthy_path) && isfile(faulty_path)
             df_normal = load_rdata(healthy_path)
-            df_faulty = load_rdata(faulty_path)
+            df_faulty = load_faulty_target_idvs(faulty_path)
 
             # タスク1.2の完了確認: 対象3 IDV(4, 11, 14)について、
             # サンプル20以前(FAULT_INJECTION_SAMPLE=21より前)に
@@ -980,10 +985,10 @@ using .TEPDataLoader: load_rdata
         #
         # ランタイム抑制のため(タスク2.2の完了確認テストと同じ判断、STATUS REPORTの
         # CONCERNSに記録): 正常データはfit側の先頭20run(run<=20)のみ、異常データ(IDV4)
-        # はsimulationRun<=20のみに絞り込む。RData.loadによる.RDataファイル自体の読み込み
-        # (正常データ約250,000行、異常データ約5,000,000行)はこの絞り込みの有無に関わらず
-        # 発生し時間を要するが、その後のlambda同定・しきい値計算・検知評価はこの絞り込みに
-        # より高速になる。
+        # はsimulationRun<=20のみに絞り込む。異常データはload_faulty_target_idvsにより
+        # IDV(4, 11, 14)のキャッシュから読み込む(.RDataファイル全体の読み込みはキャッシュ
+        # 作成時の初回のみ)。lambda同定・しきい値計算・検知評価はこの絞り込みにより
+        # 高速になる。
         project_root = dirname(dirname(@__DIR__))
         healthy_path = joinpath(project_root, "TEP_FaultFree_Training.RData")
         faulty_path = joinpath(project_root, "TEP_Faulty_Training.RData")
@@ -1005,9 +1010,9 @@ using .TEPDataLoader: load_rdata
             @test isfinite(threshold)
             @test threshold > 0.0
 
-            # RData.load(faulty_path)自体(約5,000,000行)の読み込みに要する時間を
+            # 異常データの読み込み(初回はキャッシュ作成を含む)に要する時間を
             # 以下のwall-clock計測から除外するため、ロード完了後にt_startを置く
-            df_faulty_all = load_rdata(faulty_path)
+            df_faulty_all = load_faulty_target_idvs(faulty_path)
             df_faulty_idv4_small = filter(
                 row -> row.faultNumber == 4 && row.simulationRun <= 20, df_faulty_all
             )
@@ -1253,7 +1258,7 @@ using .TEPDataLoader: load_rdata
 
             mean_threshold = PhysicsResiduals.calibrate_threshold(lam, df_holdout_small)
 
-            df_faulty_all = load_rdata(faulty_path)
+            df_faulty_all = load_faulty_target_idvs(faulty_path)
             df_faulty_small = filter(
                 row -> row.faultNumber in (11, 14) && row.simulationRun <= 20, df_faulty_all
             )
