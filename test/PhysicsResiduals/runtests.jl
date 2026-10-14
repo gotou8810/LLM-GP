@@ -1305,4 +1305,117 @@ load_faulty_target_idvs(faulty_path) = load_rdata_subset(faulty_path; fault_numb
         end
     end
 
+    @testset "diagnose_sliding_window (合成データ: 既知のlambdaドリフトの方向・大きさの正しい復元、タスク4.1完了確認)" begin
+        # タスク4.1の完了確認: 凍結lambda(frozen)と、既知のドリフトを持つ直近窓データ
+        # (true_a2, true_t_cw_in2がfrozenからの既知差分を持つ)に対しdiagnose_sliding_windowを
+        # 実行すると、各lambda要素(a, b, 導出t_cw_in)の変化の方向(符号)と大きさ(絶対値)が
+        # 正しく返ることを確認する。identify_lambda(タスク2.1)と同じ厳密OLS復元ロジックを
+        # 再利用しているため、ノイズなしの合成データでは数値誤差内で既知の真値に一致するはずである
+        # (identify_lambdaの既存テスト「identify_lambda (合成データ: タスク2.1完了確認、既知a,bの復元)」
+        # と同じデータ構築パターンを踏襲)。
+        rng = MersenneTwister(2024)
+        n = 80
+
+        # 凍結lambda(検知に使われている値、これ自体はダミーの既知値として直接構築する)
+        a_frozen = 2.0
+        t_cw_in_frozen = 30.0
+        b_frozen = -a_frozen * t_cw_in_frozen  # -60.0
+        frozen_lam = PhysicsResiduals.ReactorCwLambda(a_frozen, b_frozen, t_cw_in_frozen, true, nothing)
+
+        # 直近窓データの真のlambda: aは増加(+0.3)、t_cw,inは上昇(+5.0)という既知のドリフトを持つ
+        # (例えばIDV(4)による冷却水入口温度上昇の仮説と同じ方向性、CLAUDE.md §4(b)参照)
+        a_window_true = a_frozen + 0.3           # 2.3
+        t_cw_in_window_true = t_cw_in_frozen + 5.0  # 35.0
+        b_window_true = -a_window_true * t_cw_in_window_true  # -79.9
+
+        tcw_out = 90.0 .+ 10.0 .* rand(rng, n)
+        u10 = 30.0 .+ 20.0 .* rand(rng, n)
+        x1 = u10 .* tcw_out
+        x2 = u10
+        tr = tcw_out .+ a_window_true .* x1 .+ b_window_true .* x2  # 雑音なし
+
+        df_recent = DataFrame(xmeas_9 = tr, xmeas_21 = tcw_out, xmv_10 = u10)
+
+        # 凍結lambdaの呼び出し前の値を保存し、呼び出し後に不変であることを確認するための比較用
+        frozen_before = (frozen_lam.a, frozen_lam.b, frozen_lam.t_cw_in, frozen_lam.valid, frozen_lam.invalid_reason)
+
+        result = PhysicsResiduals.diagnose_sliding_window(frozen_lam, df_recent)
+
+        @test result isa PhysicsResiduals.DiagnosticResult
+
+        # window_lambdaは直近窓データから厳密OLSで復元された真値に(数値誤差内で)一致する
+        @test isapprox(result.window_lambda.a, a_window_true; atol = 1e-6, rtol = 1e-6)
+        @test isapprox(result.window_lambda.b, b_window_true; atol = 1e-4, rtol = 1e-6)
+        @test isapprox(result.window_lambda.t_cw_in, t_cw_in_window_true; atol = 1e-4, rtol = 1e-4)
+
+        # frozen_lambdaは引数として渡したものと同一の値を保持する
+        @test result.frozen_lambda === frozen_lam
+
+        # 各差分(delta)は方向(符号)と大きさ(絶対値)の両方を正しく運ぶ: a, t_cw,inは増加(正)、
+        # bはより負に変化(負の方向)というドリフトの既知の向きと一致すること
+        @test isapprox(result.delta_a, a_window_true - a_frozen; atol = 1e-6, rtol = 1e-6)
+        @test result.delta_a > 0.0  # aは増加方向
+
+        @test isapprox(result.delta_b, b_window_true - b_frozen; atol = 1e-4, rtol = 1e-6)
+        @test result.delta_b < 0.0  # bはより負の方向
+
+        @test isapprox(result.delta_t_cw_in, t_cw_in_window_true - t_cw_in_frozen; atol = 1e-4, rtol = 1e-4)
+        @test result.delta_t_cw_in > 0.0  # t_cw,inは上昇方向
+
+        # 凍結lambdaは呼び出し前後で不変(Requirement 6.3、design.md Postconditions
+        # 「frozen_lamは呼び出し前後で不変」)であることを、フィールド値の比較で確認する
+        # (ReactorCwLambdaはイミュータブルなstructだが、関数が引数とは別の新しいオブジェクトを
+        # 誤って返すことで呼び出し元の変数を上書きするような使われ方をしていないことも含めて確認する)
+        frozen_after = (frozen_lam.a, frozen_lam.b, frozen_lam.t_cw_in, frozen_lam.valid, frozen_lam.invalid_reason)
+        @test frozen_before == frozen_after
+    end
+
+    @testset "diagnose_sliding_window (frozen_lamを書き換える操作がAPIに存在しないこと、Requirement 6.3)" begin
+        # design.md LambdaDiagnostics「Validation」: Requirement 6.3は型レベルで担保される
+        # (frozen_lamを書き換える操作がAPIに存在しない)。ReactorCwLambdaはmutable structではなく
+        # イミュータブルなstructであるため、フィールド代入(frozen_lam.a = ...)自体が
+        # Juliaの言語レベルでコンパイルエラーとなることを確認する。
+        frozen_lam = PhysicsResiduals.ReactorCwLambda(2.0, -60.0, 30.0, true, nothing)
+        @test_throws ErrorException frozen_lam.a = 999.0
+    end
+
+    @testset "diagnose_sliding_window (診断窓は検知フラグ周辺の直近データであり、異常データを含んでよいこと、Requirement 6.1/design.md Preconditions)" begin
+        # design.md LambdaDiagnostics Service Interface「Preconditions: df_recentは検知フラグが
+        # 発生した周辺の直近データ」。これは検知(=異常発生)後の診断を想定しており、
+        # calibrate_threshold/calibrate_variance_threshold(Requirement 5.4等)のような
+        # 「正常データのみ」を要求する防御的チェックとは異なる目的の関数である
+        # (CLAUDE.md §3「検知時はlambdaを固定する。診断時のみ、スライディングウィンドウで
+        # 再推定し、どのlambdaがどれだけ動いたかを報告する」が診断の対象として想定する状況)。
+        #
+        # df_recentにfaultNumber != 0の行(異常データ)を含めても、diagnose_sliding_windowが
+        # エラーを投げずに正しく動作すること(スプリアスな拒否が起きないこと)を確認する。
+        rng = MersenneTwister(99)
+        n = 40
+        a_true = 2.0
+        t_cw_in_true = 30.0
+        b_true = -a_true * t_cw_in_true
+
+        tcw_out = 90.0 .+ 10.0 .* rand(rng, n)
+        u10 = 30.0 .+ 20.0 .* rand(rng, n)
+        x1 = u10 .* tcw_out
+        x2 = u10
+        tr = tcw_out .+ a_true .* x1 .+ b_true .* x2
+
+        # IDV(4)の異常データを模擬するfaultNumber列(全行が故障中)を付加する。
+        # build_design_matrixが参照する列(xmeas_9/xmeas_21/xmv_10)はそのままなので、
+        # 同定ロジック自体はfaultNumber列の値を一切参照しない
+        df_recent_faulty = DataFrame(
+            xmeas_9 = tr, xmeas_21 = tcw_out, xmv_10 = u10,
+            faultNumber = fill(4, n), simulationRun = fill(1, n), sample = collect(1:n)
+        )
+
+        frozen_lam = PhysicsResiduals.ReactorCwLambda(1.5, -45.0, 30.0, true, nothing)
+
+        # エラーが投げられず、正しく同定結果が返ること(スプリアスな拒否が起きないことの確認)
+        result = PhysicsResiduals.diagnose_sliding_window(frozen_lam, df_recent_faulty)
+        @test result isa PhysicsResiduals.DiagnosticResult
+        @test isapprox(result.window_lambda.a, a_true; atol = 1e-6, rtol = 1e-6)
+        @test isapprox(result.window_lambda.t_cw_in, t_cw_in_true; atol = 1e-4, rtol = 1e-4)
+    end
+
 end
